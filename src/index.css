@@ -1,0 +1,45 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display:ital@0;1&display=swap');
+
+:root {
+  font-family: 'DM Sans', 'Segoe UI', sans-serif;
+  font-optical-sizing: auto;
+  color: #263634;
+  background: #f4f6f3;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --ink: #263634;
+  --muted: #78827e;
+  --line: #e4e9e5;
+  --surface: #fff;
+  --canvas: #f4f6f3;
+  --green: #2f7867;
+  --green-deep: #20594d;
+  --mint: #e9f2ed;
+  --amber: #d6a64f;
+  --danger: #b94d48;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; min-width: 320px; min-height: 100%; }
+body { min-height: 100vh; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #86baa8; outline-offset: 3px; }
+a { color: inherit; text-decoration: none; }
+::selection { color: #173c34; background: #cfe4d8; }
+
+:root[data-theme='dark'] {
+  color: #e7efeb;
+  background: #17211f;
+  --ink: #e7efeb;
+  --muted: #a0ada7;
+  --line: #34413d;
+  --surface: #202c29;
+  --canvas: #17211f;
+  --green: #6bb79d;
+  --green-deep: #8bcbb4;
+  --mint: #283d36;
+  --amber: #e1bb73;
+  --danger: #e0837e;
+}
