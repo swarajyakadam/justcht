@@ -14,7 +14,7 @@ export function getSessionMiddleware() {
   sessionMiddleware = session({
     name: 'privatechat.sid',
     secret,
-    store: MongoStore.create({ client: mongoose.connection.getClient(), collectionName: 'sessions', ttl: 30 * 24 * 60 * 60 }),
+    store: MongoStore.create({ client: mongoose.connection.getClient(), collectionName: 'sessions', ttl: 30 * 24 * 60 * 60, touchAfter: 24 * 60 * 60 }),
     resave: false,
     saveUninitialized: false,
     rolling: true,
@@ -22,7 +22,6 @@ export function getSessionMiddleware() {
       httpOnly: true,
       sameSite: isProd ? 'none' : 'strict',
       secure: isProd,
-      maxAge: 24 * 60 * 60 * 1000,
       path: '/',
     },
   })

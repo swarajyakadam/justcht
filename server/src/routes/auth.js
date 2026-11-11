@@ -136,7 +136,7 @@ router.post('/login', loginLimit, async (request, response) => {
   await new Promise((resolve, reject) => request.session.regenerate((error) => error ? reject(error) : resolve()))
   request.session.userId = user.id
   request.session.authVersion = user.authVersion
-  request.session.cookie.maxAge = parsed.data.rememberMe ? 30 * 24 * 60 * 60_000 : 60 * 60_000
+  if (parsed.data.rememberMe) request.session.cookie.maxAge = 30 * 24 * 60 * 60_000
   await new Promise((resolve, reject) => request.session.save((error) => error ? reject(error) : resolve()))
   return response.json({ user: safeUser(user) })
 })
