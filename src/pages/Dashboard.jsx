@@ -91,43 +91,79 @@ function PresenceLabel({ userId }) {
 
 function MessageHistory({ conversationId, currentUserId, refreshKey, localMessages, onDelete, privateKey, getTheirKey, theirUserId }) {
   const [messages, setMessages] = useState([])
-  const [decrypted, setDecrypted] = useState({}) // msgId → plaintext
+  const [decrypted, setDecrypted] = useState({})
   const [loading, setLoading] = useState(true)
-  const [menu, setMenu] = useState(null) // { msgId, mine, x, y }
+  const [menu, setMenu] = useState(null)
   const bottomRef = useRef(null)
+  // Refs so the interval closure always sees latest values without re-subscribing
+  const msgsRef = useRef([])
+  const decryptedRef = useRef({})
+  const privateKeyRef = useRef(privateKey)
+  const getTheirKeyRef = useRef(getTheirKey)
+  useEffect(() => { privateKeyRef.current = privateKey }, [privateKey])
+  useEffect(() => { getTheirKeyRef.current = getTheirKey }, [getTheirKey])
 
   useEffect(() => {
     let active = true
-    function load(initial = false) {
-      if (initial) setLoading(true)
-      api(`/api/messages/${conversationId}?limit=40`)
-        .then(async (r) => {
-          if (!active) return
-          setMessages(r.messages)
-          if (initial) setLoading(false)
-          // Decrypt all messages
-          if (privateKey && theirUserId) {
-            const theirKey = await getTheirKey(theirUserId)
-            if (theirKey) {
-              const entries = await Promise.all(r.messages.map(async (m) => {
-                const senderId = m.senderId?.id ?? m.senderId?.toString?.() ?? m.senderId
-                const partnerKey = senderId === currentUserId ? theirKey : theirKey
-                const plain = await decryptMessage(m.encryptedPayload, privateKey, partnerKey)
-                return [m.id ?? m._id, plain]
-              }))
-              if (active) setDecrypted(Object.fromEntries(entries))
+    msgsRef.current = []
+    decryptedRef.current = {}
+    setMessages([])
+    setDecrypted({})
+    setLoading(true)
+
+    async function load(initial = false) {
+      let r
+      try { r = await api(`/api/messages/${conversationId}?limit=40`) }
+      catch { if (active && initial) setLoading(false); return }
+      if (!active) return
+
+      const incoming = r.messages
+      const prev = msgsRef.current
+
+      // Only update state when something actually changed
+      const changed =
+        incoming.length !== prev.length ||
+        incoming.some((m, i) => !prev[i] ||
+          (m.id ?? m._id) !== (prev[i].id ?? prev[i]._id) ||
+          m.deliveryStatus !== prev[i].deliveryStatus)
+
+      if (changed) {
+        msgsRef.current = incoming
+        setMessages(incoming)
+
+        // Decrypt only messages not already cached
+        const pk = privateKeyRef.current
+        if (pk && theirUserId) {
+          const theirKey = await getTheirKeyRef.current(theirUserId)
+          if (theirKey && active) {
+            const toDecrypt = incoming.filter((m) => !((m.id ?? m._id) in decryptedRef.current))
+            if (toDecrypt.length) {
+              const entries = await Promise.all(toDecrypt.map(async (m) => [
+                m.id ?? m._id,
+                await decryptMessage(m.encryptedPayload, pk, theirKey),
+              ]))
+              if (active) {
+                const next = { ...decryptedRef.current, ...Object.fromEntries(entries) }
+                decryptedRef.current = next
+                setDecrypted(next)
+              }
             }
           }
-          r.messages
-            .filter((m) => (m.senderId?.id ?? m.senderId) !== currentUserId && m.deliveryStatus !== 'read')
-            .forEach((m) => api(`/api/messages/${m.id ?? m._id}/read`, { method: 'PATCH' }).catch(() => {}))
-        })
-        .catch(() => { if (active && initial) setLoading(false) })
+        }
+
+        // Mark incoming messages from the other user as read
+        incoming
+          .filter((m) => (m.senderId?.id ?? m.senderId) !== currentUserId && m.deliveryStatus !== 'read')
+          .forEach((m) => api(`/api/messages/${m.id ?? m._id}/read`, { method: 'PATCH' }).catch(() => {}))
+      }
+
+      if (active && initial) setLoading(false)
     }
+
     load(true)
-    const interval = setInterval(() => load(false), 1500)
+    const interval = setInterval(() => load(false), 2000)
     return () => { active = false; clearInterval(interval) }
-  }, [conversationId, refreshKey, privateKey, theirUserId])
+  }, [conversationId, refreshKey, theirUserId])
 
   const allMessages = useMemo(() => {
     const serverIds = new Set(messages.map((m) => m.clientMessageId))
