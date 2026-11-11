@@ -9,6 +9,7 @@ import authRouter from './routes/auth.js'
 import contactsRouter from './routes/contacts.js'
 import conversationsRouter from './routes/conversations.js'
 import messagesRouter from './routes/messages.js'
+import keysRouter from './routes/keys.js'
 import realtimeRouter from './routes/realtime.js'
 import usersRouter from './routes/users.js'
 
@@ -64,6 +65,7 @@ app.use('/api/users', usersRouter)
 app.use('/api/contacts', contactsRouter)
 app.use('/api/conversations', conversationsRouter)
 app.use('/api/messages', messagesRouter)
+app.use('/api/keys', keysRouter)
 app.use('/api/realtime', realtimeRouter)
 
 app.use((error, _request, response, next) => {

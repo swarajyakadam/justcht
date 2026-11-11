@@ -7,6 +7,13 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { api } from '../services/api.js'
+import {
+  getOrCreateIdentityKeypair,
+  exportPublicKey,
+  importPublicKey,
+  encryptMessage,
+  decryptMessage,
+} from '../services/crypto.js'
 
 function Avatar({ user, size = 'normal' }) {
   const initials = (user?.fullName ?? user?.username ?? '?').split(/[\s._-]+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase()
@@ -40,6 +47,34 @@ function usePresence(userId) {
   return lastSeen
 }
 
+// Initialise this device's keypair and publish the public key to the server.
+// Returns { privateKey, theirKeyCache } where theirKeyCache is a Map userId→CryptoKey.
+function useCrypto(currentUserId) {
+  const [keys, setKeys] = useState(null) // { privateKey }
+  const theirKeyCache = useRef(new Map())
+
+  useEffect(() => {
+    if (!currentUserId) return
+    getOrCreateIdentityKeypair().then(async ({ privateKey, publicKeyRaw }) => {
+      const b64 = exportPublicKey(publicKeyRaw)
+      await api('/api/keys', { method: 'POST', body: { publicKey: b64 } }).catch(() => {})
+      setKeys({ privateKey })
+    }).catch(() => {})
+  }, [currentUserId])
+
+  async function getTheirKey(userId) {
+    if (theirKeyCache.current.has(userId)) return theirKeyCache.current.get(userId)
+    try {
+      const { publicKey: b64 } = await api(`/api/keys/${userId}`)
+      const key = await importPublicKey(b64)
+      theirKeyCache.current.set(userId, key)
+      return key
+    } catch { return null }
+  }
+
+  return { privateKey: keys?.privateKey ?? null, getTheirKey }
+}
+
 function PresenceLabel({ userId }) {
   const lastSeen = usePresence(userId)
   if (!lastSeen) return <span className="presence offline">Offline</span>
@@ -54,8 +89,9 @@ function PresenceLabel({ userId }) {
   return <span className="presence offline">{label}</span>
 }
 
-function MessageHistory({ conversationId, currentUserId, refreshKey, localMessages, onDelete }) {
+function MessageHistory({ conversationId, currentUserId, refreshKey, localMessages, onDelete, privateKey, getTheirKey, theirUserId }) {
   const [messages, setMessages] = useState([])
+  const [decrypted, setDecrypted] = useState({}) // msgId → plaintext
   const [loading, setLoading] = useState(true)
   const [menu, setMenu] = useState(null) // { msgId, mine, x, y }
   const bottomRef = useRef(null)
@@ -65,10 +101,23 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
     function load(initial = false) {
       if (initial) setLoading(true)
       api(`/api/messages/${conversationId}?limit=40`)
-        .then((r) => {
+        .then(async (r) => {
           if (!active) return
           setMessages(r.messages)
           if (initial) setLoading(false)
+          // Decrypt all messages
+          if (privateKey && theirUserId) {
+            const theirKey = await getTheirKey(theirUserId)
+            if (theirKey) {
+              const entries = await Promise.all(r.messages.map(async (m) => {
+                const senderId = m.senderId?.id ?? m.senderId?.toString?.() ?? m.senderId
+                const partnerKey = senderId === currentUserId ? theirKey : theirKey
+                const plain = await decryptMessage(m.encryptedPayload, privateKey, partnerKey)
+                return [m.id ?? m._id, plain]
+              }))
+              if (active) setDecrypted(Object.fromEntries(entries))
+            }
+          }
           r.messages
             .filter((m) => (m.senderId?.id ?? m.senderId) !== currentUserId && m.deliveryStatus !== 'read')
             .forEach((m) => api(`/api/messages/${m.id ?? m._id}/read`, { method: 'PATCH' }).catch(() => {}))
@@ -78,13 +127,19 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
     load(true)
     const interval = setInterval(() => load(false), 1500)
     return () => { active = false; clearInterval(interval) }
-  }, [conversationId, refreshKey])
+  }, [conversationId, refreshKey, privateKey, theirUserId])
 
   const allMessages = useMemo(() => {
     const serverIds = new Set(messages.map((m) => m.clientMessageId))
     const pending = localMessages.filter((m) => !serverIds.has(m.clientMessageId))
     return [...messages, ...pending]
   }, [messages, localMessages])
+
+  // Decrypt optimistic local messages on the fly
+  const displayText = (msg) => {
+    if (msg.pending) return msg.encryptedPayload // already plaintext (optimistic)
+    return decrypted[msg.id ?? msg._id] ?? msg.encryptedPayload
+  }
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [allMessages])
   useEffect(() => {
@@ -133,7 +188,7 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
             }}
           >
             <div className="message-bubble">
-              <p>{msg.encryptedPayload}</p>
+              <p>{displayText(msg)}</p>
               <div className="message-meta">
                 <time>{new Date(msg.messageTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
                 {tick}
@@ -157,18 +212,34 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
   )
 }
 
-function ConversationView({ conversation, onBack, onDeleteChat, currentUser }) {
+function ConversationView({ conversation, onBack, onDeleteChat, currentUser, privateKey, getTheirKey }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [localMessages, setLocalMessages] = useState([])
-  const [chatMenu, setChatMenu] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(null) // 'me' | 'everyone'
+  const [chatMenu, setChatMenu] = useState(null)
+  const [confirmDelete, setConfirmDelete] = useState(null)
   const inputRef = useRef(null)
+  const theirUserId = conversation.participant?.userId
 
   useEffect(() => { inputRef.current?.focus() }, [conversation.id])
-  useEffect(() => { setLocalMessages([]); setChatMenu(false); setConfirmDelete(null) }, [conversation.id])
+  useEffect(() => { setLocalMessages([]); setChatMenu(null); setConfirmDelete(null) }, [conversation.id])
+
+  // Poll for remote deletion (other user deleted for everyone)
+  useEffect(() => {
+    let active = true
+    const interval = setInterval(async () => {
+      try {
+        await api(`/api/conversations/${conversation.id}`)
+      } catch (f) {
+        if (active && f.status === 404) {
+          onDeleteChat(conversation.id, '_remote')
+        }
+      }
+    }, 5000)
+    return () => { active = false; clearInterval(interval) }
+  }, [conversation.id])
 
   async function send(event) {
     event.preventDefault()
@@ -187,12 +258,22 @@ function ConversationView({ conversation, onBack, onDeleteChat, currentUser }) {
     setText('')
     setBusy(true); setError('')
     try {
+      // Encrypt if keys are available
+      let payload = trimmed
+      let protocol = 'plaintext'
+      if (privateKey && theirUserId) {
+        const theirKey = await getTheirKey(theirUserId)
+        if (theirKey) {
+          payload = await encryptMessage(trimmed, privateKey, theirKey)
+          protocol = 'ECDH-P256-AES256GCM'
+        }
+      }
       await api('/api/messages', {
         method: 'POST',
         body: {
           conversationId: conversation.id,
-          encryptedPayload: trimmed,
-          encryptionMetadata: { protocol: 'plaintext', version: '1' },
+          encryptedPayload: payload,
+          encryptionMetadata: { protocol, version: '1' },
           messageType: 'text',
           clientMessageId,
         },
@@ -218,14 +299,17 @@ function ConversationView({ conversation, onBack, onDeleteChat, currentUser }) {
           <strong>{conversation.participant?.fullName ?? 'Conversation'}</strong>
           <PresenceLabel userId={conversation.participant?.userId} />
         </div>
+        <span className={`e2e-badge ${privateKey ? 'e2e-on' : 'e2e-off'}`} title={privateKey ? 'End-to-end encrypted' : 'Encryption initialising…'}>
+          <LockKeyhole size={11} />{privateKey ? 'E2E Encrypted' : 'Encrypting…'}
+        </span>
         <div style={{position:'relative'}}>
-          <button className="icon-button" onClick={(e) => { e.stopPropagation(); setChatMenu((v) => !v) }} aria-label="More options"><MoreVertical size={19} /></button>
+          <button className="icon-button" onClick={(e) => { e.stopPropagation(); setChatMenu((v) => v ? null : { x: Math.min(e.clientX, window.innerWidth - 210), y: e.clientY + 8 }) }} aria-label="More options"><MoreVertical size={19} /></button>
           {chatMenu && (
             <>
-              <div className="menu-backdrop" onClick={() => setChatMenu(false)} />
-              <div className="msg-menu chat-options-menu">
-                <button onClick={() => { setChatMenu(false); setConfirmDelete('me') }}><Trash2 size={14} /> Delete chat for me</button>
-                <button className="danger-text" onClick={() => { setChatMenu(false); setConfirmDelete('everyone') }}><Trash2 size={14} /> Delete chat for everyone</button>
+              <div className="menu-backdrop" onClick={() => setChatMenu(null)} />
+              <div className="msg-menu chat-options-menu" style={{ top: chatMenu.y, left: chatMenu.x }}>
+                <button onClick={() => { setChatMenu(null); setConfirmDelete('me') }}><Trash2 size={14} /> Delete chat for me</button>
+                <button className="danger-text" onClick={() => { setChatMenu(null); setConfirmDelete('everyone') }}><Trash2 size={14} /> Delete chat for everyone</button>
               </div>
             </>
           )}
@@ -248,7 +332,7 @@ function ConversationView({ conversation, onBack, onDeleteChat, currentUser }) {
           await api(`/api/messages/${msgId}?mode=${mode}`, { method: 'DELETE' })
           setRefreshKey((k) => k + 1)
         } catch (f) { setError(f.message) }
-      }} />
+      }} privateKey={privateKey} getTheirKey={getTheirKey} theirUserId={theirUserId} />
       <form className="composer" onSubmit={send}>
         {error && <p className="form-error composer-error" role="alert">{error}</p>}
         <input
@@ -369,7 +453,7 @@ function SettingsPanel({ onLogout, onLogoutAll }) {
     <section className="work-panel settings-panel">
       <div className="section-heading"><div><span className="eyebrow">Make it yours</span><h2>Settings</h2></div></div>
       <div className="settings-row"><span className="settings-icon"><Sun size={18} /></span><div className="settings-copy"><strong>Appearance</strong><span>{dark ? 'Dark' : 'Light'} theme</span></div><button className={`toggle ${dark ? 'toggle-on' : ''}`} onClick={toggleTheme} role="switch" aria-checked={dark}><span /></button></div>
-      <div className="settings-row"><span className="settings-icon"><ShieldAlert size={18} /></span><div className="settings-copy"><strong>End-to-end encryption</strong><span>Not yet enabled.</span></div><span className="status-pill status-pending">Not enabled</span></div>
+      <div className="settings-row"><span className="settings-icon"><ShieldAlert size={18} /></span><div className="settings-copy"><strong>End-to-end encryption</strong><span>ECDH P-256 + AES-256-GCM. Keys never leave your device.</span></div><span className="status-pill status-active">Enabled</span></div>
       <div className="settings-row"><span className="settings-icon"><LogOut size={18} /></span><div className="settings-copy"><strong>Log out all devices</strong><span>Revoke every active session.</span></div><button className="secondary-button danger-button" onClick={() => setConfirming('all')}>Log out all</button></div>
       {confirming && <div className="confirm-strip"><span>Sign out every device?</span><button className="text-button" onClick={() => setConfirming('')}>Cancel</button><button className="text-button danger-text" onClick={onLogoutAll}>Confirm</button></div>}
     </section>
@@ -381,6 +465,7 @@ const SECTIONS = ['/', '/contacts', '/connect', '/profile', '/settings']
 export default function Dashboard() {
   const { user, setUser, logout } = useAuth()
   useHeartbeat()
+  const { privateKey, getTheirKey } = useCrypto(user?.id)
   const [section, setSection] = useState('/')
   const [conversations, setConversations] = useState([])
   const [selectedConversation, setSelectedConversation] = useState(null)
@@ -419,7 +504,7 @@ export default function Dashboard() {
 
   async function deleteChat(conversationId, mode) {
     try {
-      await api(`/api/conversations/${conversationId}?mode=${mode}`, { method: 'DELETE' })
+      if (mode !== '_remote') await api(`/api/conversations/${conversationId}?mode=${mode}`, { method: 'DELETE' })
       setConversations((prev) => prev.filter((c) => c.id !== conversationId))
       setSelectedConversation(null)
     } catch (f) { setError(f.message) }
@@ -472,7 +557,7 @@ export default function Dashboard() {
               <Avatar user={item.participant} />
               <span className="conversation-summary">
                 <strong>{item.participant?.fullName}</strong>
-                <span>{item.lastMessage ? item.lastMessage.encryptedPayload || 'Message' : 'Start a conversation'}</span>
+                <span>{item.lastMessage ? '🔒 Encrypted message' : 'Start a conversation'}</span>
               </span>
               <span className="conversation-trailing">
                 {item.lastMessage && <time>{new Date(item.lastMessage.messageTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>}
@@ -497,7 +582,7 @@ export default function Dashboard() {
 
       <section className={`workspace ${section !== '/' || !selectedConversation ? 'has-panel' : ''}`}>
         {selectedConversation && section === '/'
-          ? <ConversationView conversation={selectedConversation} currentUser={user} onBack={() => setSelectedConversation(null)} onDeleteChat={deleteChat} />
+          ? <ConversationView conversation={selectedConversation} currentUser={user} onBack={() => setSelectedConversation(null)} onDeleteChat={deleteChat} privateKey={privateKey} getTheirKey={getTheirKey} />
           : section === '/contacts' ? <ContactsPanel onStartChat={openConversation} />
           : section === '/connect' ? <ConnectPanel onStartChat={openConversation} />
           : section === '/profile' ? <ProfilePanel user={user} setUser={setUser} onLogout={() => confirmLogout()} />

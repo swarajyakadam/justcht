@@ -14,7 +14,9 @@ export async function api(path, options = {}) {
   if (!response.ok) {
     if (response.status === 429) throw new Error(payload.error ?? 'Too many attempts. Wait a few minutes and try again.')
     if (response.status >= 500) throw new Error(payload.error ?? 'The service is temporarily unavailable. Please try again.')
-    throw new Error(payload.error ?? 'The request could not be completed.')
+    const err = new Error(payload.error ?? 'The request could not be completed.')
+    err.status = response.status
+    throw err
   }
   return payload
 }

@@ -12,7 +12,7 @@ router.use(requireUser)
 const publicParticipant = (user) => ({ id: user.id, userId: user.userId, username: user.username, fullName: user.fullName, profilePicture: user.profilePicture })
 
 router.get('/', async (request, response) => {
-  const conversations = await Conversation.find({ participants: request.user.id })
+  const conversations = await Conversation.find({ participants: request.user.id, deletedFor: { $ne: request.user.id } })
     .populate('participants', 'userId username fullName profilePicture')
     .sort({ updatedAt: -1 })
   const items = await Promise.all(conversations.map(async (conversation) => {
@@ -70,6 +70,7 @@ router.delete('/:conversationId', async (request, response) => {
     await Conversation.deleteOne({ _id: conversation.id })
   } else {
     await Message.updateMany({ conversationId: conversation.id }, { $addToSet: { deletedFor: request.user.id } })
+    await Conversation.updateOne({ _id: conversation.id }, { $addToSet: { deletedFor: request.user.id } })
   }
   return response.status(204).end()
 })

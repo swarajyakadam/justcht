@@ -5,6 +5,7 @@ const conversationSchema = new mongoose.Schema({
   pairKey: { type: String, required: true, unique: true },
   conversationType: { type: String, enum: ['personal'], default: 'personal' },
   lastMessageAt: Date,
+  deletedFor: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 }, { timestamps: true, versionKey: false })
 
 conversationSchema.index({ participants: 1, updatedAt: -1 })
