@@ -235,10 +235,10 @@ button { color: inherit; }
   .app-shell { display: flex; flex-direction: column; }
   .app-shell.chat-open .app-sidebar { display: none; }
   .app-shell.chat-open .workspace { flex: 1; }
-  .app-shell:not(.chat-open) .workspace:not(.has-panel) { display: none; }
-  .app-shell:not(.chat-open) .workspace.has-panel { flex: 1; }
-  .app-shell:not(.chat-open) .app-sidebar:has(~ .workspace.has-panel) { display: none; }
-  .app-shell:not(.chat-open) .app-sidebar { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding-bottom: 70px; }
+  .app-shell.panel-open .app-sidebar { display: none; }
+  .app-shell.panel-open .workspace { flex: 1; }
+  .app-shell:not(.chat-open):not(.panel-open) .workspace { display: none; }
+  .app-shell:not(.chat-open):not(.panel-open) .app-sidebar { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding-bottom: 70px; }
   .conversation-view { height: 100%; min-height: 0; border: 0; border-radius: 0; flex: 1; }
   .conversation-header { min-height: 60px; padding: 0 11px; }
   .mobile-back { display: grid; }

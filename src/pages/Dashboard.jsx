@@ -559,7 +559,7 @@ export default function Dashboard() {
   ]
 
   return (
-    <main className={`app-shell ${selectedConversation && section === '/' ? 'chat-open' : ''}`}>
+    <main className={`app-shell ${selectedConversation && section === '/' ? 'chat-open' : ''} ${!selectedConversation && section !== '/' ? 'panel-open' : ''}`}>
       <aside className="app-sidebar">
         <div className="sidebar-top">
           <span className="brand"><span className="brand-mark"><MessageCircle size={18} /></span>PRIVATECHAT</span>
