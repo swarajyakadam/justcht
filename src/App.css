@@ -185,10 +185,17 @@ button { color: inherit; }
 .empty-chat-icon { width: 43px; height: 43px; display: grid; place-items: center; margin-bottom: 5px; border-radius: 50%; color: var(--green); background: var(--mint); }
 .realtime-warning { padding: 8px; border-radius: 4px; color: #886b37; background: #f6f0df; font-size: 10px; }
 .msg-deleted { color: var(--muted); font-style: italic; }
-.msg-menu { position: fixed; z-index: 100; min-width: 180px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
-.msg-menu button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 9px 11px; border: 0; border-radius: 5px; color: var(--ink); background: transparent; font-size: 12px; text-align: left; }
+.msg-menu { position: fixed; z-index: 100; min-width: 200px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+.chat-options-menu { position: absolute; top: 100%; right: 0; left: auto; }
+.msg-menu button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 13px; border: 0; border-radius: 5px; color: var(--ink); background: transparent; font-size: 12px; text-align: left; }
 .msg-menu button:hover { background: var(--canvas); }
 .msg-menu button.danger-text { color: var(--danger); }
+.menu-backdrop { position: fixed; inset: 0; z-index: 99; }
+.delete-confirm-modal { position: fixed; z-index: 200; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(320px, 90vw); padding: 24px; border-radius: 12px; background: var(--surface); box-shadow: 0 16px 48px rgba(0,0,0,.24); border: 1px solid var(--line); }
+.delete-confirm-modal p { margin: 0 0 20px; color: var(--ink); font-size: 13px; line-height: 1.6; }
+.delete-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.danger-btn { background: var(--danger); border-color: var(--danger); }
+.danger-btn:hover:not(:disabled) { background: #a93226; border-color: #a93226; transform: none; }
 .composer { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 11px 13px; border-top: 1px solid var(--line); background: var(--surface); }
 .composer-error { width: 100%; margin: 0; }
 .composer-input { min-width: 0; flex: 1; height: 42px; padding: 0 14px; border: 1px solid var(--line); border-radius: 21px; outline: 0; color: var(--ink); background: var(--canvas); font-size: 13px; }

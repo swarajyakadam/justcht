@@ -219,21 +219,29 @@ function ConversationView({ conversation, onBack, onDeleteChat, currentUser }) {
           <PresenceLabel userId={conversation.participant?.userId} />
         </div>
         <div style={{position:'relative'}}>
-          <button className="icon-button" onClick={() => setChatMenu((v) => !v)} aria-label="More options"><MoreVertical size={19} /></button>
+          <button className="icon-button" onClick={(e) => { e.stopPropagation(); setChatMenu((v) => !v) }} aria-label="More options"><MoreVertical size={19} /></button>
           {chatMenu && (
-            <div className="msg-menu" style={{top:'100%', right:0, left:'auto'}} onClick={() => setChatMenu(false)}>
-              <button onClick={() => setConfirmDelete('me')}><Trash2 size={14} /> Delete chat for me</button>
-              <button className="danger-text" onClick={() => setConfirmDelete('everyone')}><Trash2 size={14} /> Delete chat for everyone</button>
-            </div>
+            <>
+              <div className="menu-backdrop" onClick={() => setChatMenu(false)} />
+              <div className="msg-menu chat-options-menu">
+                <button onClick={() => { setChatMenu(false); setConfirmDelete('me') }}><Trash2 size={14} /> Delete chat for me</button>
+                <button className="danger-text" onClick={() => { setChatMenu(false); setConfirmDelete('everyone') }}><Trash2 size={14} /> Delete chat for everyone</button>
+              </div>
+            </>
           )}
         </div>
       </header>
       {confirmDelete && (
-        <div className="confirm-strip">
-          <span>{confirmDelete === 'everyone' ? 'Delete entire chat for both users? This cannot be undone.' : 'Delete this chat for yourself?'}</span>
-          <button className="text-button" onClick={() => setConfirmDelete(null)}>Cancel</button>
-          <button className="text-button danger-text" onClick={() => { onDeleteChat(conversation.id, confirmDelete); setConfirmDelete(null) }}>Delete</button>
-        </div>
+        <>
+          <div className="menu-backdrop" onClick={() => setConfirmDelete(null)} />
+          <div className="delete-confirm-modal">
+            <p>{confirmDelete === 'everyone' ? 'Delete entire chat for both users? This cannot be undone.' : 'Delete this chat for yourself only?'}</p>
+            <div className="delete-confirm-actions">
+              <button className="secondary-button" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="primary-button danger-btn" onClick={() => { onDeleteChat(conversation.id, confirmDelete); setConfirmDelete(null) }}>Delete</button>
+            </div>
+          </div>
+        </>
       )}
       <MessageHistory conversationId={conversation.id} currentUserId={currentUser.id} refreshKey={refreshKey} localMessages={localMessages} onDelete={async (msgId, mode) => {
         try {
