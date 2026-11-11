@@ -16,16 +16,26 @@ const app = express()
 const allowedOrigins = new Set([
   process.env.CLIENT_ORIGIN,
   process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
+  process.env.VERCEL_BRANCH_URL ? `https://${process.env.VERCEL_BRANCH_URL}` : undefined,
+  process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined,
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ].filter(Boolean))
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true
+  if (allowedOrigins.has(origin)) return true
+  if (/^https:\/\/[a-z0-9-]+-[a-z0-9]+-[a-z0-9]+\.vercel\.app$/.test(origin)) return true
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL && origin.endsWith('.vercel.app')) return true
+  return false
+}
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
 app.use(helmet({ frameguard: { action: 'deny' } }))
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin)) return callback(null, origin || '*')
+    if (isAllowedOrigin(origin)) return callback(null, origin || '*')
     return callback(new Error('CORS_ORIGIN_DENIED'))
   },
   credentials: true,
@@ -40,7 +50,7 @@ app.get('/api/health', (_request, response) => {
 app.use('/api', (request, response, next) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
     const origin = request.get('origin')
-    if (origin && !allowedOrigins.has(origin)) {
+    if (origin && !isAllowedOrigin(origin)) {
       return response.status(403).json({ error: 'Request origin is not allowed.' })
     }
   }

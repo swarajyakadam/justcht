@@ -12,7 +12,7 @@ export async function connectDatabase() {
     connectionPromise = mongoose.connect(uri.toString(), {
       serverSelectionTimeoutMS: 15_000,
       maxPoolSize: 5,
-      autoIndex: process.env.NODE_ENV !== 'production',
+      autoIndex: true,
     }).catch((error) => {
       connectionPromise = undefined
       throw error

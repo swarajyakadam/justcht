@@ -9,6 +9,7 @@ export function getSessionMiddleware() {
   if (sessionMiddleware) return sessionMiddleware
   const secret = process.env.SESSION_SECRET
   if (!secret || secret.length < 32) throw new Error('SESSION_SECRET_NOT_CONFIGURED')
+  const isProd = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production'
 
   sessionMiddleware = session({
     name: 'privatechat.sid',
@@ -19,8 +20,8 @@ export function getSessionMiddleware() {
     rolling: true,
     cookie: {
       httpOnly: true,
-      sameSite: 'strict',
-      secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
+      sameSite: isProd ? 'none' : 'strict',
+      secure: isProd,
       maxAge: 60 * 60 * 1000,
       path: '/',
     },
