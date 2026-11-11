@@ -62,8 +62,8 @@ export function LoginPage() {
 
   return <AuthFrame eyebrow="Welcome back" title="Sign in" detail="Pick up right where your conversations left off." footer={<>New around here? <Link to="/signup">Create an account <ArrowRight size={14} /></Link></>}>
     <form className="auth-form" onSubmit={submit}>
-      <Field icon={UserRound} label="User ID or username" value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="PC5821 or username" autoComplete="username" />
-      <PasswordField label="Password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
+      <Field icon={UserRound} label="User ID or username" value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="PC5821 or username" autoComplete="off" />
+      <PasswordField label="Password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="off" />
       <div className="form-options"><label className="check-label"><input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} /><span className="custom-check"><Check size={12} /></span>Remember me</label><Link to="/forgot-password">Forgot password?</Link></div>
       {error && <p className="form-error" role="alert">{error}</p>}
       <button className="primary-button full-button" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'} <ArrowRight size={17} /></button>

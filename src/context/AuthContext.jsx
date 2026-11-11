@@ -16,15 +16,19 @@ export function AuthProvider({ children }) {
   }, [])
 
   useEffect(() => {
+    if (!user) return
+    const sessionOnly = sessionStorage.getItem('pc-session-only') === '1'
+    if (!sessionOnly) return
     function handleUnload() {
       navigator.sendBeacon('/api/auth/logout')
     }
-    window.addEventListener('beforeunload', handleUnload)
-    return () => window.removeEventListener('beforeunload', handleUnload)
-  }, [])
+    window.addEventListener('pagehide', handleUnload)
+    return () => window.removeEventListener('pagehide', handleUnload)
+  }, [user])
 
   async function login(credentials) {
     const result = await api('/api/auth/login', { method: 'POST', body: credentials })
+    sessionStorage.setItem('pc-session-only', credentials.rememberMe ? '0' : '1')
     setUser(result.user)
     return result.user
   }
@@ -33,6 +37,7 @@ export function AuthProvider({ children }) {
     try {
       await api(`/api/auth/${allDevices ? 'logout-all' : 'logout'}`, { method: 'POST', body: {} })
     } finally {
+      sessionStorage.removeItem('pc-session-only')
       setUser(null)
     }
   }
