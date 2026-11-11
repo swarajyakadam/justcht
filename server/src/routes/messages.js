@@ -82,7 +82,6 @@ router.delete('/:messageId', async (request, response) => {
   if (!message || !(await getAuthorizedConversation(message.conversationId, request.user.id))) return response.status(404).json({ error: 'Message not found.' })
 
   if (mode.data === 'everyone') {
-    if (message.senderId.toString() !== request.user.id) return response.status(403).json({ error: 'You can only delete your own messages for everyone.' })
     await Message.deleteOne({ _id: message.id })
   } else {
     await Message.updateOne({ _id: message.id }, { $addToSet: { deletedFor: request.user.id } })

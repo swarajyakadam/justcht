@@ -2,7 +2,7 @@ import { createElement, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, ArrowRight, Check, CheckCheck, ChevronDown,
   ContactRound, Copy, LockKeyhole, LogOut, MessageCircle,
-  Plus, Search, Send, Settings, ShieldAlert, ShieldCheck, Sun,
+  MoreVertical, Plus, Search, Send, Settings, ShieldAlert, ShieldCheck, Sun,
   Trash2, UserPlus, UserRound, X,
 } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
@@ -97,7 +97,10 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
   function openMenu(e, msg, mine) {
     if (msg.pending) return
     e.preventDefault()
-    setMenu({ msgId: msg.id, mine, x: e.clientX, y: e.clientY })
+    e.stopPropagation()
+    const x = Math.min(e.clientX, window.innerWidth - 200)
+    const y = Math.min(e.clientY, window.innerHeight - 100)
+    setMenu({ msgId: msg.id, mine, x, y })
   }
 
   if (loading) return <div className="message-status">Loading…</div>
@@ -111,7 +114,7 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
   return (
     <div className="message-list">
       {allMessages.map((msg) => {
-        const mine = msg.senderId === currentUserId || msg.senderId?.id === currentUserId
+        const mine = (msg.senderId?.id ?? msg.senderId?.toString?.() ?? msg.senderId) === currentUserId
         const tick = !mine ? null
           : msg.pending ? <Check size={13} className="tick tick-pending" />
           : msg.deliveryStatus === 'read' ? <CheckCheck size={13} className="tick tick-read" />
@@ -123,14 +126,14 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
             onContextMenu={(e) => openMenu(e, msg, mine)}
             onTouchStart={(e) => {
               const t = e.touches[0]
-              const timer = setTimeout(() => openMenu({ preventDefault: () => {}, clientX: t.clientX, clientY: t.clientY }, msg, mine), 500)
+              const timer = setTimeout(() => openMenu({ preventDefault: () => {}, stopPropagation: () => {}, clientX: t.clientX, clientY: t.clientY }, msg, mine), 500)
               const cancel = () => clearTimeout(timer)
               e.currentTarget.addEventListener('touchend', cancel, { once: true })
               e.currentTarget.addEventListener('touchmove', cancel, { once: true })
             }}
           >
             <div className="message-bubble">
-              <p>{msg.deletedForEveryone ? null : msg.encryptedPayload}</p>
+              <p>{msg.encryptedPayload}</p>
               <div className="message-meta">
                 <time>{new Date(msg.messageTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
                 {tick}
@@ -145,11 +148,9 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
           <button onClick={() => { onDelete(menu.msgId, 'me'); setMenu(null) }}>
             <Trash2 size={14} /> Delete for me
           </button>
-          {menu.mine && (
-            <button className="danger-text" onClick={() => { onDelete(menu.msgId, 'everyone'); setMenu(null) }}>
-              <Trash2 size={14} /> Delete for everyone
-            </button>
-          )}
+          <button className="danger-text" onClick={() => { onDelete(menu.msgId, 'everyone'); setMenu(null) }}>
+            <Trash2 size={14} /> Delete for everyone
+          </button>
         </div>
       )}
     </div>
@@ -163,10 +164,11 @@ function ConversationView({ conversation, onBack, onDeleteChat, currentUser }) {
   const [refreshKey, setRefreshKey] = useState(0)
   const [localMessages, setLocalMessages] = useState([])
   const [chatMenu, setChatMenu] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(null) // 'me' | 'everyone'
   const inputRef = useRef(null)
 
   useEffect(() => { inputRef.current?.focus() }, [conversation.id])
-  useEffect(() => { setLocalMessages([]); setChatMenu(false) }, [conversation.id])
+  useEffect(() => { setLocalMessages([]); setChatMenu(false); setConfirmDelete(null) }, [conversation.id])
 
   async function send(event) {
     event.preventDefault()
@@ -217,15 +219,22 @@ function ConversationView({ conversation, onBack, onDeleteChat, currentUser }) {
           <PresenceLabel userId={conversation.participant?.userId} />
         </div>
         <div style={{position:'relative'}}>
-          <button className="icon-button" onClick={() => setChatMenu((v) => !v)} aria-label="More options"><X size={18} style={{transform: chatMenu ? 'none' : 'rotate(45deg)', transition:'transform .2s'}} /></button>
+          <button className="icon-button" onClick={() => setChatMenu((v) => !v)} aria-label="More options"><MoreVertical size={19} /></button>
           {chatMenu && (
             <div className="msg-menu" style={{top:'100%', right:0, left:'auto'}} onClick={() => setChatMenu(false)}>
-              <button onClick={() => onDeleteChat(conversation.id, 'me')}><Trash2 size={14} /> Delete chat for me</button>
-              <button className="danger-text" onClick={() => onDeleteChat(conversation.id, 'everyone')}><Trash2 size={14} /> Delete chat for everyone</button>
+              <button onClick={() => setConfirmDelete('me')}><Trash2 size={14} /> Delete chat for me</button>
+              <button className="danger-text" onClick={() => setConfirmDelete('everyone')}><Trash2 size={14} /> Delete chat for everyone</button>
             </div>
           )}
         </div>
       </header>
+      {confirmDelete && (
+        <div className="confirm-strip">
+          <span>{confirmDelete === 'everyone' ? 'Delete entire chat for both users? This cannot be undone.' : 'Delete this chat for yourself?'}</span>
+          <button className="text-button" onClick={() => setConfirmDelete(null)}>Cancel</button>
+          <button className="text-button danger-text" onClick={() => { onDeleteChat(conversation.id, confirmDelete); setConfirmDelete(null) }}>Delete</button>
+        </div>
+      )}
       <MessageHistory conversationId={conversation.id} currentUserId={currentUser.id} refreshKey={refreshKey} localMessages={localMessages} onDelete={async (msgId, mode) => {
         try {
           await api(`/api/messages/${msgId}?mode=${mode}`, { method: 'DELETE' })
