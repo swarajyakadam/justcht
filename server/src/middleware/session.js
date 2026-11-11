@@ -22,7 +22,7 @@ export function getSessionMiddleware() {
       httpOnly: true,
       sameSite: isProd ? 'none' : 'strict',
       secure: isProd,
-      maxAge: 60 * 60 * 1000,
+      maxAge: 24 * 60 * 60 * 1000,
       path: '/',
     },
   })

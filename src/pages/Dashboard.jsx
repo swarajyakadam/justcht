@@ -420,7 +420,7 @@ export default function Dashboard() {
   ]
 
   return (
-    <main className={`app-shell ${selectedConversation && section === '/' ? 'app-shell-detail' : ''}`}>
+    <main className={`app-shell ${selectedConversation && section === '/' ? 'chat-open' : ''}`}>
       <aside className="app-sidebar">
         <div className="sidebar-top">
           <span className="brand"><span className="brand-mark"><MessageCircle size={18} /></span>PRIVATECHAT</span>
@@ -478,7 +478,7 @@ export default function Dashboard() {
         </footer>
       </aside>
 
-      <section className="workspace">
+      <section className={`workspace ${section !== '/' || !selectedConversation ? 'has-panel' : ''}`}>
         {selectedConversation && section === '/'
           ? <ConversationView conversation={selectedConversation} currentUser={user} onBack={() => setSelectedConversation(null)} onDeleteChat={deleteChat} />
           : section === '/contacts' ? <ContactsPanel onStartChat={openConversation} />

@@ -17,13 +17,12 @@ router.get('/', async (request, response) => {
     .sort({ updatedAt: -1 })
   const items = await Promise.all(conversations.map(async (conversation) => {
     const other = conversation.participants.find((participant) => participant.id !== request.user.id)
-    const lastMessage = await Message.findOne({ conversationId: conversation.id, deletedForEveryone: false })
-      .sort({ messageTimestamp: -1 }).select('messageType deliveryStatus messageTimestamp senderId')
+    const lastMessage = await Message.findOne({ conversationId: conversation.id, deletedFor: { $ne: request.user.id } })
+      .sort({ messageTimestamp: -1 }).select('encryptedPayload messageType deliveryStatus messageTimestamp senderId')
     const unreadCount = await Message.countDocuments({
       conversationId: conversation.id,
       senderId: { $ne: request.user.id },
       readBy: { $ne: request.user.id },
-      deletedForEveryone: false,
       deletedFor: { $ne: request.user.id },
     })
     return { id: conversation.id, participant: other ? publicParticipant(other) : null, lastMessage, unreadCount, updatedAt: conversation.updatedAt }

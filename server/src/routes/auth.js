@@ -1,5 +1,6 @@
-import { createHash, randomBytes } from 'node:crypto'
 import process from 'node:process'
+import { createHash, randomBytes } from 'node:crypto'
+const isProd = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production'
 import { Router } from 'express'
 import argon2 from 'argon2'
 import { rateLimit } from 'express-rate-limit'
@@ -142,14 +143,14 @@ router.post('/login', loginLimit, async (request, response) => {
 
 router.post('/logout', async (request, response) => {
   if (request.session) await new Promise((resolve) => request.session.destroy(() => resolve()))
-  response.clearCookie('privatechat.sid', { httpOnly: true, sameSite: 'strict', secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production', path: '/' })
+  response.clearCookie('privatechat.sid', { httpOnly: true, sameSite: isProd ? 'none' : 'strict', secure: isProd, path: '/' })
   return response.status(204).end()
 })
 
 router.post('/logout-all', logoutAllLimit, requireUser, async (request, response) => {
   await User.updateOne({ _id: request.user.id }, { $inc: { authVersion: 1 } })
   await new Promise((resolve) => request.session.destroy(() => resolve()))
-  response.clearCookie('privatechat.sid', { httpOnly: true, sameSite: 'strict', secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production', path: '/' })
+  response.clearCookie('privatechat.sid', { httpOnly: true, sameSite: isProd ? 'none' : 'strict', secure: isProd, path: '/' })
   return response.status(204).end()
 })
 

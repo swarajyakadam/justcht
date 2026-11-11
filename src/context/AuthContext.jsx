@@ -15,6 +15,14 @@ export function AuthProvider({ children }) {
     return () => { active = false }
   }, [])
 
+  useEffect(() => {
+    function handleUnload() {
+      navigator.sendBeacon('/api/auth/logout')
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
+  }, [])
+
   async function login(credentials) {
     const result = await api('/api/auth/login', { method: 'POST', body: credentials })
     setUser(result.user)
