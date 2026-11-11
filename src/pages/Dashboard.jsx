@@ -71,7 +71,7 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
           if (initial) setLoading(false)
           r.messages
             .filter((m) => (m.senderId?.id ?? m.senderId) !== currentUserId && m.deliveryStatus !== 'read')
-            .forEach((m) => api(`/api/messages/${m.id}/read`, { method: 'PATCH' }).catch(() => {}))
+            .forEach((m) => api(`/api/messages/${m.id ?? m._id}/read`, { method: 'PATCH' }).catch(() => {}))
         })
         .catch(() => { if (active && initial) setLoading(false) })
     }
@@ -100,7 +100,7 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
     e.stopPropagation()
     const x = Math.min(e.clientX, window.innerWidth - 200)
     const y = Math.min(e.clientY, window.innerHeight - 100)
-    setMenu({ msgId: msg.id, mine, x, y })
+    setMenu({ msgId: msg.id ?? msg._id, mine, x, y })
   }
 
   if (loading) return <div className="message-status">Loading…</div>

@@ -11,7 +11,7 @@ const messageSchema = new mongoose.Schema({
   readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   deletedFor: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   deletedForEveryone: { type: Boolean, default: false },
-}, { timestamps: { createdAt: 'messageTimestamp', updatedAt: false }, versionKey: false })
+}, { timestamps: { createdAt: 'messageTimestamp', updatedAt: false }, versionKey: false, toJSON: { virtuals: true }, toObject: { virtuals: true } })
 
 messageSchema.index({ conversationId: 1, messageTimestamp: -1 })
 messageSchema.index({ conversationId: 1, senderId: 1, clientMessageId: 1 }, { unique: true })
