@@ -11,6 +11,33 @@ router.use(requireUser)
 
 const publicParticipant = (user) => ({ id: user.id, userId: user.userId, username: user.username, fullName: user.fullName, profilePicture: user.profilePicture })
 
+router.get('/stream', async (request, response) => {
+  response.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', Connection: 'keep-alive' })
+  response.flushHeaders()
+
+  let lastCheck = new Date()
+  const interval = setInterval(async () => {
+    try {
+      const newConvos = await Conversation.find({
+        participants: request.user.id,
+        deletedFor: { $ne: request.user.id },
+        createdAt: { $gt: lastCheck },
+      }).populate('participants', 'userId username fullName profilePicture')
+      if (newConvos.length) {
+        lastCheck = new Date()
+        const items = newConvos.map((c) => {
+          const other = c.participants.find((p) => p.id !== request.user.id)
+          return { id: c.id, participant: other ? publicParticipant(other) : null, lastMessage: null, unreadCount: 0, updatedAt: c.updatedAt }
+        })
+        response.write(`event: conversations\ndata: ${JSON.stringify({ conversations: items })}\n\n`)
+      }
+    } catch { /* ignore */ }
+  }, 500)
+
+  const heartbeat = setInterval(() => response.write(': ping\n\n'), 25_000)
+  request.on('close', () => { clearInterval(interval); clearInterval(heartbeat) })
+})
+
 router.get('/', async (request, response) => {
   const conversations = await Conversation.find({ participants: request.user.id, deletedFor: { $ne: request.user.id } })
     .populate('participants', 'userId username fullName profilePicture')

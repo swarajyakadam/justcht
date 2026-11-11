@@ -516,6 +516,19 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => {
+    const es = new EventSource('/api/conversations/stream', { withCredentials: true })
+    es.addEventListener('conversations', (e) => {
+      const { conversations: incoming } = JSON.parse(e.data)
+      setConversations((prev) => {
+        const existingIds = new Set(prev.map((c) => c.id))
+        const fresh = incoming.filter((c) => !existingIds.has(c.id))
+        return fresh.length ? [...fresh, ...prev] : prev
+      })
+    })
+    return () => es.close()
+  }, [])
+
+  useEffect(() => {
     const theme = localStorage.getItem('privatechat-theme')
     if (theme) document.documentElement.dataset.theme = theme
   }, [])
