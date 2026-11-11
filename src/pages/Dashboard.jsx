@@ -111,58 +111,59 @@ function MessageHistory({ conversationId, currentUserId, refreshKey, localMessag
     setDecrypted({})
     setLoading(true)
 
-    async function load(initial = false) {
-      let r
-      try { r = await api(`/api/messages/${conversationId}?limit=40`) }
-      catch { if (active && initial) setLoading(false); return }
+    async function applyMessages(incoming, replace = false) {
       if (!active) return
+      const next = replace ? incoming : (() => {
+        const existingIds = new Set(msgsRef.current.map((m) => m.id ?? m._id))
+        const merged = [...msgsRef.current, ...incoming.filter((m) => !existingIds.has(m.id ?? m._id))]
+        merged.sort((a, b) => new Date(a.messageTimestamp) - new Date(b.messageTimestamp))
+        return merged
+      })()
 
-      const incoming = r.messages
-      const prev = msgsRef.current
+      msgsRef.current = next
+      setMessages([...next])
 
-      // Only update state when something actually changed
-      const changed =
-        incoming.length !== prev.length ||
-        incoming.some((m, i) => !prev[i] ||
-          (m.id ?? m._id) !== (prev[i].id ?? prev[i]._id) ||
-          m.deliveryStatus !== prev[i].deliveryStatus)
-
-      if (changed) {
-        msgsRef.current = incoming
-        setMessages(incoming)
-
-        // Decrypt only messages not already cached
-        const pk = privateKeyRef.current
-        if (pk && theirUserId) {
-          const theirKey = await getTheirKeyRef.current(theirUserId)
-          if (theirKey && active) {
-            const toDecrypt = incoming.filter((m) => !((m.id ?? m._id) in decryptedRef.current))
-            if (toDecrypt.length) {
-              const entries = await Promise.all(toDecrypt.map(async (m) => [
-                m.id ?? m._id,
-                await decryptMessage(m.encryptedPayload, pk, theirKey),
-              ]))
-              if (active) {
-                const next = { ...decryptedRef.current, ...Object.fromEntries(entries) }
-                decryptedRef.current = next
-                setDecrypted(next)
-              }
+      const pk = privateKeyRef.current
+      if (pk && theirUserId) {
+        const theirKey = await getTheirKeyRef.current(theirUserId)
+        if (theirKey && active) {
+          const toDecrypt = incoming.filter((m) => !((m.id ?? m._id) in decryptedRef.current))
+          if (toDecrypt.length) {
+            const entries = await Promise.all(toDecrypt.map(async (m) => [
+              m.id ?? m._id,
+              await decryptMessage(m.encryptedPayload, pk, theirKey),
+            ]))
+            if (active) {
+              const updated = { ...decryptedRef.current, ...Object.fromEntries(entries) }
+              decryptedRef.current = updated
+              setDecrypted(updated)
             }
           }
         }
-
-        // Mark incoming messages from the other user as read
-        incoming
-          .filter((m) => (m.senderId?.id ?? m.senderId) !== currentUserId && m.deliveryStatus !== 'read')
-          .forEach((m) => api(`/api/messages/${m.id ?? m._id}/read`, { method: 'PATCH' }).catch(() => {}))
       }
 
-      if (active && initial) setLoading(false)
+      incoming
+        .filter((m) => (m.senderId?.id ?? m.senderId) !== currentUserId && m.deliveryStatus !== 'read')
+        .forEach((m) => api(`/api/messages/${m.id ?? m._id}/read`, { method: 'PATCH' }).catch(() => {}))
     }
 
-    load(true)
-    const interval = setInterval(() => load(false), 2000)
-    return () => { active = false; clearInterval(interval) }
+    const es = new EventSource(`/api/messages/${conversationId}/stream`, { withCredentials: true })
+
+    es.addEventListener('init', (e) => {
+      const { messages: msgs } = JSON.parse(e.data)
+      applyMessages(msgs, true).then(() => { if (active) setLoading(false) })
+    })
+
+    es.addEventListener('messages', (e) => {
+      const { messages: msgs } = JSON.parse(e.data)
+      applyMessages(msgs, false)
+    })
+
+    es.onerror = () => {
+      if (active) setLoading(false)
+    }
+
+    return () => { active = false; es.close() }
   }, [conversationId, refreshKey, theirUserId])
 
   const allMessages = useMemo(() => {

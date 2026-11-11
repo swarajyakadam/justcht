@@ -62,6 +62,49 @@ router.post('/', async (request, response) => {
   return response.status(201).json({ message, realtimePublished })
 })
 
+// SSE: push new messages to the client in real-time
+router.get('/:conversationId/stream', async (request, response) => {
+  const conversation = await getAuthorizedConversation(request.params.conversationId, request.user.id)
+  if (!conversation) return response.status(404).json({ error: 'Conversation not found.' })
+
+  response.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'X-Accel-Buffering': 'no',
+    Connection: 'keep-alive',
+  })
+  response.flushHeaders()
+
+  const send = (event, data) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+
+  // Send the latest messages immediately on connect
+  const initial = await Message.find({
+    conversationId: conversation.id,
+    deletedFor: { $ne: request.user.id },
+  }).sort({ messageTimestamp: -1 }).limit(40)
+  send('init', { messages: initial.reverse() })
+
+  // Poll MongoDB every 400ms and push only new messages
+  let lastCheck = new Date()
+  const interval = setInterval(async () => {
+    try {
+      const newMsgs = await Message.find({
+        conversationId: conversation.id,
+        deletedFor: { $ne: request.user.id },
+        messageTimestamp: { $gt: lastCheck },
+      }).sort({ messageTimestamp: 1 })
+      if (newMsgs.length) {
+        lastCheck = newMsgs.at(-1).messageTimestamp
+        send('messages', { messages: newMsgs })
+      }
+    } catch { /* ignore */ }
+  }, 400)
+
+  const heartbeat = setInterval(() => response.write(': ping\n\n'), 25_000)
+
+  request.on('close', () => { clearInterval(interval); clearInterval(heartbeat) })
+})
+
 router.patch('/:messageId/read', async (request, response) => {
   if (!mongoose.isValidObjectId(request.params.messageId)) return response.status(404).json({ error: 'Message not found.' })
   const message = await Message.findById(request.params.messageId)
