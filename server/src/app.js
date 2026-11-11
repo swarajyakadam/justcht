@@ -17,6 +17,7 @@ const allowedOrigins = new Set([
   process.env.CLIENT_ORIGIN,
   process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
 ].filter(Boolean))
 
 app.disable('x-powered-by')
@@ -24,14 +25,13 @@ app.set('trust proxy', 1)
 app.use(helmet({ frameguard: { action: 'deny' } }))
 app.use(cors({
   origin(origin, callback) {
-    if (!origin) return callback(null, false)
-    if (allowedOrigins.has(origin)) return callback(null, origin)
+    if (!origin || allowedOrigins.has(origin)) return callback(null, origin || '*')
     return callback(new Error('CORS_ORIGIN_DENIED'))
   },
   credentials: true,
 }))
 app.use(express.json({ limit: '64kb' }))
-app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }))
+app.use(rateLimit({ windowMs: 60_000, limit: process.env.NODE_ENV === 'production' ? 120 : 10_000, standardHeaders: 'draft-8', legacyHeaders: false }))
 
 app.get('/api/health', (_request, response) => {
   response.json({ status: 'ok', service: 'privatechat-api' })
@@ -40,7 +40,9 @@ app.get('/api/health', (_request, response) => {
 app.use('/api', (request, response, next) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
     const origin = request.get('origin')
-    if (!origin || !allowedOrigins.has(origin)) return response.status(403).json({ error: 'Request origin is not allowed.' })
+    if (origin && !allowedOrigins.has(origin)) {
+      return response.status(403).json({ error: 'Request origin is not allowed.' })
+    }
   }
   connectDatabase()
     .then(() => getSessionMiddleware()(request, response, next))

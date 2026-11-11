@@ -15,8 +15,9 @@ const port = Number(process.env.API_PORT ?? 3001)
 try {
   await connectDatabase()
   console.log('MongoDB Atlas connection established.')
-} catch {
+} catch (error) {
   console.error('MongoDB Atlas connection failed. Check the URI, database user, and Atlas network access list.')
+  console.error(JSON.stringify({ errorType: error.name, code: error.code ?? null, codeName: error.codeName ?? null, causeCode: error.cause?.code ?? null }))
 }
 
 const server = createServer(app)

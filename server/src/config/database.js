@@ -7,9 +7,11 @@ export async function connectDatabase() {
   if (mongoose.connection.readyState === 1) return mongoose.connection
   if (!process.env.MONGODB_URI) throw new Error('DATABASE_NOT_CONFIGURED')
   if (!connectionPromise) {
-    connectionPromise = mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 8000,
-      maxPoolSize: 10,
+    const uri = new URL(process.env.MONGODB_URI)
+    if (!uri.pathname || uri.pathname === '/') uri.pathname = '/privatechat'
+    connectionPromise = mongoose.connect(uri.toString(), {
+      serverSelectionTimeoutMS: 15_000,
+      maxPoolSize: 5,
       autoIndex: process.env.NODE_ENV !== 'production',
     }).catch((error) => {
       connectionPromise = undefined

@@ -1,6 +1,6 @@
 # PRIVATECHAT
 
-PRIVATECHAT is an existing Vite + React application extended with a Vercel-hosted Express API, MongoDB Atlas persistence, and Ably-managed realtime channels. The current build implements account workflows, user search, contacts, conversations, profile/settings, server-side sessions, and encrypted-envelope persistence. Message composition remains disabled because end-to-end encryption is not yet implemented.
+PRIVATECHAT is an existing Vite + React application extended with a Vercel-hosted Express API, MongoDB Atlas persistence, and Ably-managed realtime channels. Signup uses a username and password without requiring an email address; successful registration allocates a `PC####` ID. The app implements user search, contacts, conversations, profile/settings, server-side sessions, and encrypted-envelope persistence. Message composition remains disabled because end-to-end encryption is not yet implemented.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ The API source is under `server/src/`; Vercel's Function entry is `api/[...path]
 4. Start Vite with `npm run dev`. The API's production entry uses Vercel Functions; run the Vercel CLI with `vercel dev` to exercise API routing locally.
 5. Run checks with `npm test`, `npm run lint`, and `npm run build`.
 
-Email verification and password reset require SMTP settings. Registration returns an explicit configuration error if delivery is unavailable. A verified account receives its `PC####` ID from the verification response.
+Password reset emails are available only for legacy accounts that have an email address stored. New accounts do not require or collect email, so users must keep their password secure.
 
 ## Vercel deployment
 

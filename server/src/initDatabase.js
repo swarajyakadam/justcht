@@ -43,6 +43,10 @@ try {
 
   for (const model of requiredModels) {
     if (!existing.has(model.collection.collectionName)) await model.createCollection()
+    if (model === User) {
+      const emailIndex = (await User.collection.indexes()).find((index) => index.name === 'email_1')
+      if (emailIndex && emailIndex.unique && emailIndex.sparse !== true) await User.collection.dropIndex('email_1')
+    }
     await model.createIndexes()
   }
 

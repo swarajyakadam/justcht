@@ -1,30 +1,282 @@
-import { createElement, useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { createElement, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, ArrowRight, Check, CheckCheck, ChevronDown, CircleHelp,
-  ContactRound, LockKeyhole, LogOut, MessageCircle,
-  MoreHorizontal, Plus, Search, Settings, ShieldAlert, ShieldCheck, Sun,
-  UserPlus, UserRound, X,
+  ArrowLeft, ArrowRight, Check, CheckCheck, ChevronDown,
+  ContactRound, Copy, LockKeyhole, LogOut, MessageCircle,
+  Plus, Search, Send, Settings, ShieldAlert, ShieldCheck, Sun,
+  Trash2, UserPlus, UserRound, X,
 } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { api } from '../services/api.js'
 
-const navigation = [
-  { path: '/', label: 'Messages', icon: MessageCircle },
-  { path: '/contacts', label: 'Contacts', icon: ContactRound },
-  { path: '/connect', label: 'Connect', icon: UserPlus },
-]
-
-function Avatar({ user, size = 'normal', className = '' }) {
-  const initials = (user?.fullName ?? user?.username ?? '?').split(/[\s._-]+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
+function Avatar({ user, size = 'normal' }) {
+  const initials = (user?.fullName ?? user?.username ?? '?').split(/[\s._-]+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase()
   return user?.profilePicture
-    ? <img className={`avatar avatar-${size} ${className}`} src={user.profilePicture} alt="" />
-    : <span className={`avatar avatar-${size} avatar-color-${(user?.userId?.slice(-1).charCodeAt(0) ?? 1) % 5} ${className}`}>{initials}</span>
+    ? <img className={`avatar avatar-${size}`} src={user.profilePicture} alt="" />
+    : <span className={`avatar avatar-${size} avatar-color-${(user?.userId?.slice(-1).charCodeAt(0) ?? 1) % 5}`}>{initials}</span>
 }
 
-function Notice({ error, success }) {
-  if (!error && !success) return null
-  return <p className={error ? 'inline-notice error-notice' : 'inline-notice success-notice'} role="status">{error || success}</p>
+function useHeartbeat() {
+  useEffect(() => {
+    api('/api/users/heartbeat', { method: 'POST' }).catch(() => {})
+    const interval = setInterval(() => api('/api/users/heartbeat', { method: 'POST' }).catch(() => {}), 30_000)
+    return () => clearInterval(interval)
+  }, [])
+}
+
+function usePresence(userId) {
+  const [lastSeen, setLastSeen] = useState(null)
+  useEffect(() => {
+    if (!userId) return
+    let active = true
+    function fetch() {
+      api(`/api/users/presence/${userId}`)
+        .then((r) => { if (active) setLastSeen(r.lastSeen ? new Date(r.lastSeen) : null) })
+        .catch(() => {})
+    }
+    fetch()
+    const interval = setInterval(fetch, 15_000)
+    return () => { active = false; clearInterval(interval) }
+  }, [userId])
+  return lastSeen
+}
+
+function PresenceLabel({ userId }) {
+  const lastSeen = usePresence(userId)
+  if (!lastSeen) return <span className="presence offline">Offline</span>
+  const diffMs = Date.now() - lastSeen.getTime()
+  if (diffMs < 60_000) return <span className="presence online">Online</span>
+  const diffMin = Math.floor(diffMs / 60_000)
+  const diffHr = Math.floor(diffMin / 60)
+  const diffDay = Math.floor(diffHr / 24)
+  const label = diffDay > 0 ? `last seen ${diffDay}d ago`
+    : diffHr > 0 ? `last seen ${diffHr}h ago`
+    : `last seen ${diffMin}m ago`
+  return <span className="presence offline">{label}</span>
+}
+
+function MessageHistory({ conversationId, currentUserId, refreshKey, localMessages, onDelete }) {
+  const [messages, setMessages] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [menu, setMenu] = useState(null) // { msgId, mine, x, y }
+  const bottomRef = useRef(null)
+
+  useEffect(() => {
+    let active = true
+    function load(initial = false) {
+      if (initial) setLoading(true)
+      api(`/api/messages/${conversationId}?limit=40`)
+        .then((r) => {
+          if (!active) return
+          setMessages(r.messages)
+          if (initial) setLoading(false)
+          r.messages
+            .filter((m) => (m.senderId?.id ?? m.senderId) !== currentUserId && m.deliveryStatus !== 'read')
+            .forEach((m) => api(`/api/messages/${m.id}/read`, { method: 'PATCH' }).catch(() => {}))
+        })
+        .catch(() => { if (active && initial) setLoading(false) })
+    }
+    load(true)
+    const interval = setInterval(() => load(false), 1500)
+    return () => { active = false; clearInterval(interval) }
+  }, [conversationId, refreshKey])
+
+  const allMessages = useMemo(() => {
+    const serverIds = new Set(messages.map((m) => m.clientMessageId))
+    const pending = localMessages.filter((m) => !serverIds.has(m.clientMessageId))
+    return [...messages, ...pending]
+  }, [messages, localMessages])
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [allMessages])
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [menu])
+
+  function openMenu(e, msg, mine) {
+    if (msg.pending) return
+    e.preventDefault()
+    setMenu({ msgId: msg.id, mine, x: e.clientX, y: e.clientY })
+  }
+
+  if (loading) return <div className="message-status">Loading…</div>
+  if (!allMessages.length) return (
+    <div className="message-status">
+      <span className="empty-chat-icon"><MessageCircle size={23} /></span>
+      <strong>Say hello!</strong>
+      <span>Messages are private to this conversation.</span>
+    </div>
+  )
+  return (
+    <div className="message-list">
+      {allMessages.map((msg) => {
+        const mine = msg.senderId === currentUserId || msg.senderId?.id === currentUserId
+        const tick = !mine ? null
+          : msg.pending ? <Check size={13} className="tick tick-pending" />
+          : msg.deliveryStatus === 'read' ? <CheckCheck size={13} className="tick tick-read" />
+          : <CheckCheck size={13} className="tick tick-sent" />
+        return (
+          <article
+            className={`message-row ${mine ? 'message-mine' : ''}`}
+            key={msg.clientMessageId ?? msg.id}
+            onContextMenu={(e) => openMenu(e, msg, mine)}
+            onTouchStart={(e) => {
+              const t = e.touches[0]
+              const timer = setTimeout(() => openMenu({ preventDefault: () => {}, clientX: t.clientX, clientY: t.clientY }, msg, mine), 500)
+              const cancel = () => clearTimeout(timer)
+              e.currentTarget.addEventListener('touchend', cancel, { once: true })
+              e.currentTarget.addEventListener('touchmove', cancel, { once: true })
+            }}
+          >
+            <div className="message-bubble">
+              <p>{msg.deletedForEveryone ? null : msg.encryptedPayload}</p>
+              <div className="message-meta">
+                <time>{new Date(msg.messageTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+                {tick}
+              </div>
+            </div>
+          </article>
+        )
+      })}
+      <div ref={bottomRef} />
+      {menu && (
+        <div className="msg-menu" style={{ top: menu.y, left: menu.x }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { onDelete(menu.msgId, 'me'); setMenu(null) }}>
+            <Trash2 size={14} /> Delete for me
+          </button>
+          {menu.mine && (
+            <button className="danger-text" onClick={() => { onDelete(menu.msgId, 'everyone'); setMenu(null) }}>
+              <Trash2 size={14} /> Delete for everyone
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ConversationView({ conversation, onBack, onDeleteChat, currentUser }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [localMessages, setLocalMessages] = useState([])
+  const [chatMenu, setChatMenu] = useState(false)
+  const inputRef = useRef(null)
+
+  useEffect(() => { inputRef.current?.focus() }, [conversation.id])
+  useEffect(() => { setLocalMessages([]); setChatMenu(false) }, [conversation.id])
+
+  async function send(event) {
+    event.preventDefault()
+    const trimmed = text.trim()
+    if (!trimmed || busy) return
+    const clientMessageId = crypto.randomUUID()
+    const optimistic = {
+      clientMessageId,
+      encryptedPayload: trimmed,
+      senderId: currentUser.id,
+      messageTimestamp: new Date().toISOString(),
+      deliveryStatus: 'sent',
+      pending: true,
+    }
+    setLocalMessages((prev) => [...prev, optimistic])
+    setText('')
+    setBusy(true); setError('')
+    try {
+      await api('/api/messages', {
+        method: 'POST',
+        body: {
+          conversationId: conversation.id,
+          encryptedPayload: trimmed,
+          encryptionMetadata: { protocol: 'plaintext', version: '1' },
+          messageType: 'text',
+          clientMessageId,
+        },
+      })
+      setRefreshKey((k) => k + 1)
+    } catch (f) {
+      setLocalMessages((prev) => prev.filter((m) => m.clientMessageId !== clientMessageId))
+      setError(f.message)
+    }
+    finally { setBusy(false) }
+  }
+
+  function onKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e) }
+  }
+
+  return (
+    <section className="conversation-view">
+      <header className="conversation-header">
+        <button className="icon-button mobile-back" onClick={onBack} aria-label="Back"><ArrowLeft size={19} /></button>
+        <Avatar user={conversation.participant} />
+        <div className="conversation-person">
+          <strong>{conversation.participant?.fullName ?? 'Conversation'}</strong>
+          <PresenceLabel userId={conversation.participant?.userId} />
+        </div>
+        <div style={{position:'relative'}}>
+          <button className="icon-button" onClick={() => setChatMenu((v) => !v)} aria-label="More options"><X size={18} style={{transform: chatMenu ? 'none' : 'rotate(45deg)', transition:'transform .2s'}} /></button>
+          {chatMenu && (
+            <div className="msg-menu" style={{top:'100%', right:0, left:'auto'}} onClick={() => setChatMenu(false)}>
+              <button onClick={() => onDeleteChat(conversation.id, 'me')}><Trash2 size={14} /> Delete chat for me</button>
+              <button className="danger-text" onClick={() => onDeleteChat(conversation.id, 'everyone')}><Trash2 size={14} /> Delete chat for everyone</button>
+            </div>
+          )}
+        </div>
+      </header>
+      <MessageHistory conversationId={conversation.id} currentUserId={currentUser.id} refreshKey={refreshKey} localMessages={localMessages} onDelete={async (msgId, mode) => {
+        try {
+          await api(`/api/messages/${msgId}?mode=${mode}`, { method: 'DELETE' })
+          setRefreshKey((k) => k + 1)
+        } catch (f) { setError(f.message) }
+      }} />
+      <form className="composer" onSubmit={send}>
+        {error && <p className="form-error composer-error" role="alert">{error}</p>}
+        <input
+          ref={inputRef}
+          className="composer-input"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="Type a message…"
+          autoComplete="off"
+        />
+        <button className="send-button" type="submit" disabled={busy || !text.trim()} aria-label="Send">
+          <Send size={18} />
+        </button>
+      </form>
+    </section>
+  )
+}
+
+function ContactsPanel({ onStartChat }) {
+  const [contacts, setContacts] = useState([])
+  const [error, setError] = useState('')
+  useEffect(() => {
+    api('/api/contacts').then(({ contacts: items }) => setContacts(items)).catch((f) => setError(f.message))
+  }, [])
+  async function remove(contactId) {
+    try { await api(`/api/contacts/${contactId}`, { method: 'DELETE' }); setContacts((c) => c.filter((i) => i.id !== contactId)) }
+    catch (f) { setError(f.message) }
+  }
+  return (
+    <section className="work-panel list-panel">
+      <div className="section-heading"><div><span className="eyebrow">Your circle</span><h2>Contacts <span className="count-label">{contacts.length}</span></h2></div></div>
+      {error && <p className="inline-notice error-notice">{error}</p>}
+      {contacts.length
+        ? <div className="contact-grid">{contacts.map(({ id, user }) => (
+          <article className="contact-row" key={id}>
+            <Avatar user={user} />
+            <div className="contact-name"><strong>{user?.fullName}</strong><span>@{user?.username} · {user?.userId}</span></div>
+            <button className="icon-button" title="Start chat" onClick={() => onStartChat(user)}><MessageCircle size={17} /></button>
+            <button className="icon-button quiet-danger" title="Remove" onClick={() => remove(id)}><X size={16} /></button>
+          </article>
+        ))}</div>
+        : <div className="empty-panel"><ContactRound size={25} /><strong>No contacts yet</strong><span>Find someone by their PRIVATECHAT ID.</span></div>}
+    </section>
+  )
 }
 
 function ConnectPanel({ onStartChat }) {
@@ -32,38 +284,30 @@ function ConnectPanel({ onStartChat }) {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-
-  async function search(event) {
-    event.preventDefault(); setError(''); setResult(null); setBusy(true)
+  async function search(e) {
+    e.preventDefault(); setError(''); setResult(null); setBusy(true)
     try { setResult((await api(`/api/users/search/${encodeURIComponent(query.trim())}`)).user) }
-    catch (failure) { setError(failure.message) }
+    catch (f) { setError(f.message) }
     finally { setBusy(false) }
   }
-
-  return <section className="work-panel connect-panel">
-    <div className="section-heading"><div><span className="eyebrow">Find your people</span><h2>Connect with someone</h2><p>Search with a PRIVATECHAT ID or username.</p></div><div className="heading-icon"><UserPlus size={19} /></div></div>
-    <form className="connect-search" onSubmit={search}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try PC5821 or username" aria-label="Search User ID or username" /><button className="primary-button" disabled={busy || query.trim().length < 3}>{busy ? 'Searching' : 'Search'} <ArrowRight size={16} /></button></form>
-    <Notice error={error} />
-    {result && <div className="person-result"><Avatar user={result} size="large" /><div className="person-copy"><strong>{result.fullName}</strong><span>@{result.username}</span><small>{result.userId}</small></div><button className="primary-button" onClick={() => onStartChat(result)}>Start chat <MessageCircle size={16} /></button></div>}
-    {!result && !error && <div className="connect-hint"><div className="hint-illustration"><MessageCircle size={26} /><span><Plus size={15} /></span></div><strong>Good conversations start somewhere.</strong><p>Enter their ID or username above to find the right person.</p></div>}
-  </section>
-}
-
-function ContactsPanel({ onStartChat }) {
-  const [contacts, setContacts] = useState([])
-  const [error, setError] = useState('')
-  useEffect(() => {
-    api('/api/contacts').then(({ contacts: items }) => setContacts(items)).catch((failure) => setError(failure.message))
-  }, [])
-  async function remove(contactId) {
-    try { await api(`/api/contacts/${contactId}`, { method: 'DELETE' }); setContacts((items) => items.filter((item) => item.id !== contactId)) }
-    catch (failure) { setError(failure.message) }
-  }
-  return <section className="work-panel list-panel">
-    <div className="section-heading"><div><span className="eyebrow">Your circle</span><h2>Contacts <span className="count-label">{contacts.length}</span></h2><p>People you have connected with.</p></div></div>
-    <Notice error={error} />
-    {contacts.length ? <div className="contact-grid">{contacts.map(({ id, user }) => <article className="contact-row" key={id}><Avatar user={user} /><div className="contact-name"><strong>{user?.fullName}</strong><span>@{user?.username} · {user?.userId}</span></div><button className="icon-button" title="Start chat" aria-label={`Start chat with ${user?.fullName}`} onClick={() => onStartChat(user)}><MessageCircle size={17} /></button><button className="icon-button quiet-danger" title="Remove contact" aria-label={`Remove ${user?.fullName}`} onClick={() => remove(id)}><X size={16} /></button></article>)}</div> : <div className="empty-panel"><ContactRound size={25} /><strong>Your contacts will appear here</strong><span>Find a person by their PRIVATECHAT ID.</span></div>}
-  </section>
+  return (
+    <section className="work-panel connect-panel">
+      <div className="section-heading"><div><span className="eyebrow">Find your people</span><h2>Connect with someone</h2><p>Search by PRIVATECHAT ID or username.</p></div></div>
+      <form className="connect-search" onSubmit={search}>
+        <Search size={18} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Try PC5821 or username" />
+        <button className="primary-button" disabled={busy || query.trim().length < 3}>{busy ? 'Searching…' : 'Search'} <ArrowRight size={16} /></button>
+      </form>
+      {error && <p className="inline-notice error-notice">{error}</p>}
+      {result && (
+        <div className="person-result">
+          <Avatar user={result} size="large" />
+          <div className="person-copy"><strong>{result.fullName}</strong><span>@{result.username}</span><small>{result.userId}</small></div>
+          <button className="primary-button" onClick={() => onStartChat(result)}>Chat <MessageCircle size={16} /></button>
+        </div>
+      )}
+    </section>
+  )
 }
 
 function ProfilePanel({ user, setUser, onLogout }) {
@@ -73,118 +317,63 @@ function ProfilePanel({ user, setUser, onLogout }) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [busy, setBusy] = useState(false)
-  async function save(event) {
-    event.preventDefault(); setBusy(true); setError(''); setSuccess('')
-    try { const result = await api('/api/users/profile', { method: 'PATCH', body: { fullName, username, profilePicture: picture } }); setUser(result.user); setSuccess('Profile updated.') }
-    catch (failure) { setError(failure.message) }
+  async function save(e) {
+    e.preventDefault(); setBusy(true); setError(''); setSuccess('')
+    try { const r = await api('/api/users/profile', { method: 'PATCH', body: { fullName, username, profilePicture: picture } }); setUser(r.user); setSuccess('Profile updated.') }
+    catch (f) { setError(f.message) }
     finally { setBusy(false) }
   }
-  return <section className="work-panel profile-panel">
-    <div className="section-heading"><div><span className="eyebrow">Your account</span><h2>Profile & identity</h2><p>Your permanent ID is how other people find you.</p></div></div>
-    <div className="profile-id-strip"><Avatar user={user} size="large" /><div><span>Your PRIVATECHAT ID</span><strong>{user.userId}</strong></div><button className="secondary-button" onClick={() => navigator.clipboard.writeText(user.userId)}><Copy size={15} /> Copy ID</button></div>
-    <form className="profile-form" onSubmit={save}><label>Full name<input value={fullName} onChange={(event) => setFullName(event.target.value)} maxLength={80} required /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={24} required /></label><label>Profile image URL<input value={picture} onChange={(event) => setPicture(event.target.value)} placeholder="https://…" type="url" /></label><Notice error={error} success={success} /><button className="primary-button" disabled={busy}>{busy ? 'Saving…' : 'Save changes'} <Check size={16} /></button></form>
-    <div className="account-actions"><div><strong>Sign out</strong><span>End this session and clear the local account state.</span></div><button className="secondary-button danger-button" onClick={onLogout}><LogOut size={15} /> Log out</button></div>
-  </section>
+  return (
+    <section className="work-panel profile-panel">
+      <div className="section-heading"><div><span className="eyebrow">Your account</span><h2>Profile & identity</h2></div></div>
+      <div className="profile-id-strip"><Avatar user={user} size="large" /><div><span>Your PRIVATECHAT ID</span><strong>{user.userId}</strong></div><button className="secondary-button" onClick={() => navigator.clipboard.writeText(user.userId)}><Copy size={15} /> Copy</button></div>
+      <form className="profile-form" onSubmit={save}>
+        <label>Full name<input value={fullName} onChange={(e) => setFullName(e.target.value)} maxLength={80} required /></label>
+        <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} minLength={3} maxLength={24} required /></label>
+        <label>Profile image URL<input value={picture} onChange={(e) => setPicture(e.target.value)} placeholder="https://…" type="url" /></label>
+        {error && <p className="inline-notice error-notice">{error}</p>}
+        {success && <p className="inline-notice success-notice">{success}</p>}
+        <button className="primary-button" disabled={busy}>{busy ? 'Saving…' : 'Save changes'} <Check size={16} /></button>
+      </form>
+      <div className="account-actions"><div><strong>Sign out</strong><span>End this session.</span></div><button className="secondary-button danger-button" onClick={onLogout}><LogOut size={15} /> Log out</button></div>
+    </section>
+  )
 }
 
 function SettingsPanel({ onLogout, onLogoutAll }) {
   const [dark, setDark] = useState(document.documentElement.dataset.theme === 'dark')
   const [confirming, setConfirming] = useState('')
   function toggleTheme() {
-    const next = !dark
-    setDark(next)
+    const next = !dark; setDark(next)
     document.documentElement.dataset.theme = next ? 'dark' : 'light'
     localStorage.setItem('privatechat-theme', next ? 'dark' : 'light')
   }
-  return <section className="work-panel settings-panel">
-    <div className="section-heading"><div><span className="eyebrow">Make it yours</span><h2>Settings</h2><p>Manage the way PRIVATECHAT works for you.</p></div></div>
-    <div className="settings-row"><span className="settings-icon"><Sun size={18} /></span><div className="settings-copy"><strong>Appearance</strong><span>{dark ? 'Dark theme' : 'Light theme'}</span></div><button className={`toggle ${dark ? 'toggle-on' : ''}`} onClick={toggleTheme} role="switch" aria-checked={dark} aria-label="Toggle dark theme"><span /></button></div>
-    <div className="settings-row"><span className="settings-icon"><ShieldAlert size={18} /></span><div className="settings-copy"><strong>End-to-end encryption</strong><span>Not yet enabled. Message sending is disabled until a vetted protocol is configured.</span></div><span className="status-pill status-pending">Not enabled</span></div>
-    <div className="settings-row"><span className="settings-icon"><LogOut size={18} /></span><div className="settings-copy"><strong>Log out from all devices</strong><span>Revoke every active session for your account.</span></div><button className="secondary-button danger-button" onClick={() => setConfirming('all')}>Log out all</button></div>
-    {confirming && <div className="confirm-strip"><span>{confirming === 'all' ? 'Sign out every active device?' : 'Sign out of this session?'}</span><button className="text-button" onClick={() => setConfirming('')}>Cancel</button><button className="text-button danger-text" onClick={() => confirming === 'all' ? onLogoutAll() : onLogout()}>Confirm</button></div>}
-    <div className="security-callout"><LockKeyhole size={17} /><div><strong>Transport security is not end-to-end encryption.</strong><p>Messages are stored as encrypted envelopes, but PRIVATECHAT does not currently have a verified client-side key exchange protocol. Do not send sensitive content.</p></div></div>
-  </section>
+  return (
+    <section className="work-panel settings-panel">
+      <div className="section-heading"><div><span className="eyebrow">Make it yours</span><h2>Settings</h2></div></div>
+      <div className="settings-row"><span className="settings-icon"><Sun size={18} /></span><div className="settings-copy"><strong>Appearance</strong><span>{dark ? 'Dark' : 'Light'} theme</span></div><button className={`toggle ${dark ? 'toggle-on' : ''}`} onClick={toggleTheme} role="switch" aria-checked={dark}><span /></button></div>
+      <div className="settings-row"><span className="settings-icon"><ShieldAlert size={18} /></span><div className="settings-copy"><strong>End-to-end encryption</strong><span>Not yet enabled.</span></div><span className="status-pill status-pending">Not enabled</span></div>
+      <div className="settings-row"><span className="settings-icon"><LogOut size={18} /></span><div className="settings-copy"><strong>Log out all devices</strong><span>Revoke every active session.</span></div><button className="secondary-button danger-button" onClick={() => setConfirming('all')}>Log out all</button></div>
+      {confirming && <div className="confirm-strip"><span>Sign out every device?</span><button className="text-button" onClick={() => setConfirming('')}>Cancel</button><button className="text-button danger-text" onClick={onLogoutAll}>Confirm</button></div>}
+    </section>
+  )
 }
 
-function MessageHistory({ conversationId, currentUserId }) {
-  const [messages, setMessages] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let active = true
-    let client
-    async function loadMessages() {
-      const result = await api(`/api/messages/${conversationId}?limit=40`)
-      if (active) setMessages(result.messages)
-    }
-    const start = async () => {
-      try {
-        await loadMessages()
-        if (!active) return
-        const ably = await import('ably')
-        if (!active) return
-        client = new ably.default.Realtime({
-          authCallback(_params, callback) {
-            api('/api/realtime/token', { method: 'POST', body: { conversationId } })
-              .then((tokenRequest) => callback(null, tokenRequest))
-              .catch((failure) => callback(failure.message, null))
-          },
-        })
-        const channel = client.channels.get(`privatechat:conversation:${conversationId}`)
-        channel.subscribe('message', (event) => {
-          setMessages((items) => items.some((item) => item.id === event.data.id) ? items : [...items, event.data])
-        })
-        client.connection.on('connected', () => { loadMessages().catch(() => {}) })
-        client.connection.on('failed', () => { if (active) setError('Realtime connection could not be established.') })
-        setError('')
-      } catch (failure) { if (active) setError(failure.message) }
-      finally { if (active) setLoading(false) }
-    }
-    start()
-    return () => { active = false; client?.close() }
-  }, [conversationId])
-
-  if (loading) return <div className="message-status">Loading conversation…</div>
-  if (!messages.length) return <div className="message-status"><span className="empty-chat-icon"><MessageCircle size={23} /></span><strong>Say hello to start the conversation.</strong><span>Messages are private to this conversation.</span>{error && <small>{error}</small>}</div>
-  return <div className="message-list">
-    {error && <p className="realtime-warning">{error} Reconnecting and syncing history…</p>}
-    {messages.map((message) => {
-      const mine = message.senderId === currentUserId || message.senderId?.id === currentUserId
-      return <article className={`message-row ${mine ? 'message-mine' : ''}`} key={message.id}><div className="message-bubble"><p>{message.deletedForEveryone ? 'This message was deleted.' : 'Encrypted message. This device cannot decrypt it because end-to-end encryption is not configured.'}</p><div className="message-meta"><time>{new Date(message.messageTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>{mine && (message.deliveryStatus === 'read' ? <CheckCheck size={13} /> : <Check size={13} />)}</div></div></article>
-    })}
-  </div>
-}
-
-function ConversationView({ conversation, onBack, currentUser }) {
-  return <section className="conversation-view">
-    <header className="conversation-header"><button className="icon-button mobile-back" onClick={onBack} aria-label="Back to conversations"><ArrowLeft size={19} /></button><Avatar user={conversation.participant} /><div className="conversation-person"><strong>{conversation.participant?.fullName ?? 'Conversation'}</strong><span>{conversation.participant?.userId}</span></div><span className="encryption-indicator"><LockKeyhole size={13} /> Not E2EE</span></header>
-    <div className="chat-date-rule"><span>PRIVATE CONVERSATION</span></div>
-    <MessageHistory conversationId={conversation.id} currentUserId={currentUser.id} />
-    <div className="composer-locked"><div className="composer-lock-icon"><LockKeyhole size={16} /></div><div><strong>Message sending is paused</strong><span>End-to-end encryption has not been configured or verified.</span></div></div>
-  </section>
-}
+const SECTIONS = ['/', '/contacts', '/connect', '/profile', '/settings']
 
 export default function Dashboard() {
   const { user, setUser, logout } = useAuth()
-  const location = useLocation()
-  const navigate = useNavigate()
-  const [searchParams, setSearchParams] = useSearchParams()
+  useHeartbeat()
+  const [section, setSection] = useState('/')
   const [conversations, setConversations] = useState([])
+  const [selectedConversation, setSelectedConversation] = useState(null)
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
-  const [mobileListOpen, setMobileListOpen] = useState(true)
-  const selectedId = searchParams.get('conversation')
-  const selectedConversation = conversations.find((item) => item.id === selectedId)
-
-  const activeSection = location.pathname
-  const shownConversations = useMemo(() => conversations.filter((item) => {
-    const term = search.trim().toLowerCase()
-    return !term || item.participant?.fullName?.toLowerCase().includes(term) || item.participant?.username?.toLowerCase().includes(term) || item.participant?.userId?.toLowerCase().includes(term)
-  }), [conversations, search])
 
   useEffect(() => {
-    api('/api/conversations').then(({ conversations: items }) => setConversations(items)).catch((failure) => setError(failure.message))
+    api('/api/conversations')
+      .then(({ conversations: items }) => setConversations(items))
+      .catch((f) => setError(f.message))
   }, [])
 
   useEffect(() => {
@@ -192,42 +381,133 @@ export default function Dashboard() {
     if (theme) document.documentElement.dataset.theme = theme
   }, [])
 
+  const shownConversations = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    return !term ? conversations : conversations.filter((c) =>
+      c.participant?.fullName?.toLowerCase().includes(term) ||
+      c.participant?.username?.toLowerCase().includes(term) ||
+      c.participant?.userId?.toLowerCase().includes(term)
+    )
+  }, [conversations, search])
+
   async function openConversation(person) {
     try {
       const { conversation } = await api('/api/conversations', { method: 'POST', body: { userId: person.userId ?? person.username } })
-      setConversations((items) => [
-        { ...conversation, unreadCount: 0 },
-        ...items.filter((item) => item.id !== conversation.id),
-      ])
-      setSearchParams({ conversation: conversation.id })
-      setMobileListOpen(false)
-      navigate('/')
-    } catch (failure) { setError(failure.message) }
+      const merged = { ...conversation, participant: conversation.participant ?? person, unreadCount: 0 }
+      setConversations((prev) => [merged, ...prev.filter((c) => c.id !== conversation.id)])
+      setSelectedConversation(merged)
+      setSection('/')
+    } catch (f) { setError(f.message) }
   }
 
-  async function confirmLogout(all = false, alreadyConfirmed = false) {
-    if (!all && !alreadyConfirmed && !window.confirm('Log out of PRIVATECHAT?')) return
+  async function deleteChat(conversationId, mode) {
+    try {
+      await api(`/api/conversations/${conversationId}?mode=${mode}`, { method: 'DELETE' })
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId))
+      setSelectedConversation(null)
+    } catch (f) { setError(f.message) }
+  }
+
+  async function confirmLogout(all = false) {
+    if (!window.confirm('Log out of PRIVATECHAT?')) return
     await logout(all)
-    navigate('/login', { replace: true })
   }
 
-  return <main className={`app-shell ${activeSection !== '/' ? 'app-shell-detail' : ''}`}>
-    <aside className="app-sidebar">
-      <div className="sidebar-top"><a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigate('/') }}><span className="brand-mark"><MessageCircle size={18} /></span>PRIVATECHAT</a></div>
-      <div className="sidebar-profile"><Avatar user={user} /><div><strong>{user.fullName}</strong><span>{user.userId}</span></div><button className="icon-button" aria-label="Open profile" onClick={() => navigate('/profile')}><ChevronDown size={16} /></button></div>
-      <nav className="primary-nav" aria-label="Main navigation">{navigation.map(({ path, label, icon }) => <button key={path} className={`nav-item ${activeSection === path ? 'nav-active' : ''}`} onClick={() => { navigate(path); setMobileListOpen(true); setSearchParams({}) }}>{createElement(icon, { size: 18 })}<span>{label}</span>{path === '/' && <span className="nav-count">{conversations.length || ''}</span>}</button>)}</nav>
-      <div className="conversation-sidebar-heading"><span>YOUR CHATS</span><button className="icon-button" title="New conversation" onClick={() => navigate('/connect')}><Plus size={17} /></button></div>
-      <label className="conversation-search"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search chats" aria-label="Search conversations" /><kbd>/</kbd></label>
-      <div className="conversation-list">
-        {shownConversations.map((item) => <button key={item.id} className={`conversation-item ${selectedId === item.id ? 'conversation-selected' : ''}`} onClick={() => { setSearchParams({ conversation: item.id }); setMobileListOpen(false); navigate('/') }}><Avatar user={item.participant} /><span className="conversation-summary"><strong>{item.participant?.fullName}</strong><span>{item.lastMessage ? 'Encrypted message' : 'Start a conversation'}</span></span><span className="conversation-trailing">{item.lastMessage && <time>{new Date(item.lastMessage.messageTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>}{item.unreadCount > 0 && <b>{item.unreadCount}</b>}</span></button>)}
-        {!shownConversations.length && <div className="sidebar-empty"><span>{search ? 'No matching chats' : 'No conversations yet'}</span><button onClick={() => navigate('/connect')}>Find someone <ArrowRight size={13} /></button></div>}
+  const nav = [
+    { key: '/', label: 'Messages', icon: MessageCircle },
+    { key: '/contacts', label: 'Contacts', icon: ContactRound },
+    { key: '/connect', label: 'Connect', icon: UserPlus },
+  ]
+
+  return (
+    <main className={`app-shell ${selectedConversation && section === '/' ? 'app-shell-detail' : ''}`}>
+      <aside className="app-sidebar">
+        <div className="sidebar-top">
+          <span className="brand"><span className="brand-mark"><MessageCircle size={18} /></span>PRIVATECHAT</span>
+        </div>
+        <div className="sidebar-profile">
+          <Avatar user={user} />
+          <div><strong>{user.fullName}</strong><span>{user.userId}</span></div>
+          <button className="icon-button" onClick={() => { setSection('/profile'); setSelectedConversation(null) }}><ChevronDown size={16} /></button>
+        </div>
+        <nav className="primary-nav">
+          {nav.map(({ key, label, icon }) => (
+            <button key={key} className={`nav-item ${section === key && !selectedConversation ? 'nav-active' : ''}`}
+              onClick={() => { setSection(key); setSelectedConversation(null) }}>
+              {createElement(icon, { size: 18 })}<span>{label}</span>
+              {key === '/' && <span className="nav-count">{conversations.length || ''}</span>}
+            </button>
+          ))}
+        </nav>
+        <div className="conversation-sidebar-heading">
+          <span>YOUR CHATS</span>
+          <button className="icon-button" onClick={() => { setSection('/connect'); setSelectedConversation(null) }}><Plus size={17} /></button>
+        </div>
+        <label className="conversation-search">
+          <Search size={15} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search chats" />
+        </label>
+        <div className="conversation-list">
+          {shownConversations.map((item) => (
+            <button key={item.id}
+              className={`conversation-item ${selectedConversation?.id === item.id ? 'conversation-selected' : ''}`}
+              onClick={() => { setSelectedConversation(item); setSection('/') }}>
+              <Avatar user={item.participant} />
+              <span className="conversation-summary">
+                <strong>{item.participant?.fullName}</strong>
+                <span>{item.lastMessage ? item.lastMessage.encryptedPayload || 'Message' : 'Start a conversation'}</span>
+              </span>
+              <span className="conversation-trailing">
+                {item.lastMessage && <time>{new Date(item.lastMessage.messageTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>}
+                {item.unreadCount > 0 && <b>{item.unreadCount}</b>}
+              </span>
+            </button>
+          ))}
+          {!shownConversations.length && (
+            <div className="sidebar-empty">
+              <span>{search ? 'No matching chats' : 'No conversations yet'}</span>
+              <button onClick={() => { setSection('/connect'); setSelectedConversation(null) }}>Find someone <ArrowRight size={13} /></button>
+            </div>
+          )}
+        </div>
+        {error && <div className="sidebar-error" role="alert">{error}</div>}
+        <footer className="sidebar-footer">
+          <button className={`nav-item ${section === '/settings' && !selectedConversation ? 'nav-active' : ''}`} onClick={() => { setSection('/settings'); setSelectedConversation(null) }}><Settings size={18} /><span>Settings</span></button>
+          <button className="nav-item" onClick={() => confirmLogout()}><LogOut size={18} /><span>Log out</span></button>
+          <div className="sidebar-status"><span className="online-dot" /> Secure session active</div>
+        </footer>
+      </aside>
+
+      <section className="workspace">
+        {selectedConversation && section === '/'
+          ? <ConversationView conversation={selectedConversation} currentUser={user} onBack={() => setSelectedConversation(null)} onDeleteChat={deleteChat} />
+          : section === '/contacts' ? <ContactsPanel onStartChat={openConversation} />
+          : section === '/connect' ? <ConnectPanel onStartChat={openConversation} />
+          : section === '/profile' ? <ProfilePanel user={user} setUser={setUser} onLogout={() => confirmLogout()} />
+          : section === '/settings' ? <SettingsPanel onLogout={() => confirmLogout()} onLogoutAll={() => confirmLogout(true)} />
+          : (
+            <div className="welcome-panel">
+              <div className="welcome-mark"><MessageCircle size={27} /></div>
+              <span className="eyebrow">A little more personal</span>
+              <h1>Your conversations<br /><em>start here.</em></h1>
+              <p>Connect with someone using their PRIVATECHAT ID.</p>
+              <button className="primary-button" onClick={() => setSection('/connect')}>Find someone <ArrowRight size={16} /></button>
+              <div className="welcome-note"><ShieldCheck size={15} /> Your identity is yours to keep.</div>
+            </div>
+          )}
+      </section>
+
+      <div className="mobile-bottom-nav">
+        {nav.map(({ key, label, icon }) => (
+          <button key={key} className={section === key && !selectedConversation ? 'mobile-nav-active' : ''}
+            onClick={() => { setSection(key); setSelectedConversation(null) }}>
+            {createElement(icon, { size: 19 })}<span>{label}</span>
+          </button>
+        ))}
+        <button className={section === '/profile' ? 'mobile-nav-active' : ''} onClick={() => { setSection('/profile'); setSelectedConversation(null) }}>
+          <UserRound size={19} /><span>Profile</span>
+        </button>
       </div>
-      {error && <div className="sidebar-error" role="alert">{error}</div>}
-      <footer className="sidebar-footer"><button className={`nav-item ${activeSection === '/settings' ? 'nav-active' : ''}`} onClick={() => navigate('/settings')}><Settings size={18} /><span>Settings</span></button><button className="nav-item" onClick={() => confirmLogout()}><LogOut size={18} /><span>Log out</span></button><div className="sidebar-status"><span className="online-dot" /> Secure session active</div></footer>
-    </aside>
-    <section className={`workspace ${!mobileListOpen && selectedConversation ? 'workspace-chat-open' : ''}`}>
-      {selectedConversation && activeSection === '/' ? <ConversationView conversation={selectedConversation} currentUser={user} onBack={() => { setMobileListOpen(true); setSearchParams({}) }} /> : activeSection === '/connect' ? <ConnectPanel onStartChat={openConversation} /> : activeSection === '/contacts' ? <ContactsPanel onStartChat={openConversation} /> : activeSection === '/profile' ? <ProfilePanel user={user} setUser={setUser} onLogout={() => confirmLogout()} /> : activeSection === '/settings' ? <SettingsPanel onLogout={() => confirmLogout()} onLogoutAll={() => confirmLogout(true)} /> : <div className="welcome-panel"><div className="welcome-mark"><MessageCircle size={27} /></div><span className="eyebrow">A little more personal</span><h1>Your conversations<br /><em>start here.</em></h1><p>Connect with someone using their PRIVATECHAT ID, then make the conversation your own.</p><button className="primary-button" onClick={() => navigate('/connect')}>Find someone <ArrowRight size={16} /></button><div className="welcome-note"><ShieldCheck size={15} /> Your identity is yours to keep.</div></div>}
-    </section>
-    <div className="mobile-bottom-nav">{navigation.map(({ path, label, icon }) => <button key={path} className={activeSection === path ? 'mobile-nav-active' : ''} onClick={() => { navigate(path); setMobileListOpen(true); setSearchParams({}) }}>{createElement(icon, { size: 19 })}<span>{label}</span></button>)}<button onClick={() => navigate('/profile')}><UserRound size={19} /><span>Profile</span></button></div>
-  </main>
+    </main>
+  )
 }

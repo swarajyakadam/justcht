@@ -2,7 +2,7 @@
 
 ## Implemented controls
 
-- Argon2id password hashes; password reset and email verification tokens are random, stored as SHA-256 digests, and expire after one hour.
+- Argon2id password hashes; password reset and legacy email verification tokens are random, stored as SHA-256 digests, and expire after one hour.
 - HTTP-only, SameSite=Strict session cookies are backed by MongoDB and regenerated after login/email verification. A per-user authorization version invalidates all sessions after password reset or logout-all.
 - Helmet headers, request-size limits, schema validation with Zod, per-process request throttling, strict configured-origin checks on mutations, generic credential errors, and sanitized server errors.
 - Unique indexes protect username, email, user ID, contact pairs, conversation pairs, and per-sender client message IDs.
@@ -19,4 +19,4 @@
 
 ## Residual risk
 
-This is not a security certification. The app is not end-to-end encrypted, public four-digit IDs are enumerable in principle, uploaded file handling is not implemented, and shared/global abuse limits and operational monitoring need deployment-specific review. Do not use it for sensitive communications until E2EE is implemented, independently reviewed, and tested.
+This is not a security certification. New accounts have no email-based recovery, public four-digit IDs are enumerable in principle, uploaded file handling is not implemented, and shared/global abuse limits and operational monitoring need deployment-specific review. The app is not end-to-end encrypted; do not use it for sensitive communications until E2EE is implemented, independently reviewed, and tested.

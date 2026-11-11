@@ -73,34 +73,39 @@ export function LoginPage() {
 }
 
 export function SignupPage() {
-  const [form, setForm] = useState({ fullName: '', username: '', email: '', password: '', confirm: '', acceptedTerms: false })
+  const [form, setForm] = useState({ fullName: '', username: '', password: '', confirm: '', acceptedTerms: false })
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
+  const [createdUser, setCreatedUser] = useState(null)
   const [busy, setBusy] = useState(false)
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.type === 'checkbox' ? event.target.checked : event.target.value }))
 
   async function submit(event) {
-    event.preventDefault(); setError(''); setNotice('')
+    event.preventDefault(); setError('')
     if (form.password !== form.confirm) return setError('Those passwords do not match.')
+    if (form.password.length < 10) return setError('Password must be at least 10 characters.')
+    if (!/^[a-zA-Z0-9._]{3,24}$/.test(form.username)) return setError('Username must be 3–24 characters and contain only letters, numbers, dots, or underscores.')
     if (!form.acceptedTerms) return setError('Please accept the terms to create an account.')
     setBusy(true)
     try {
-      const result = await api('/api/auth/register', { method: 'POST', body: { fullName: form.fullName, username: form.username, email: form.email, password: form.password, acceptedTerms: form.acceptedTerms } })
-      setNotice(result.message)
+      const result = await api('/api/auth/register', { method: 'POST', body: { fullName: form.fullName, username: form.username, password: form.password, acceptedTerms: form.acceptedTerms } })
+      setCreatedUser(result.user)
     } catch (failure) { setError(failure.message) }
     finally { setBusy(false) }
   }
 
-  return <AuthFrame eyebrow="Start a conversation" title="Create your account" detail="A name, a username, and a password that only you know." footer={<>Already have an account? <Link to="/login">Sign in <ArrowRight size={14} /></Link></>}>
+  if (createdUser) return <AuthFrame eyebrow="Account created" title="Your ID is ready" detail="No email is needed. Share this ID so people can find you; it is not a password." footer={<>Ready to chat? <Link to="/login">Sign in <ArrowRight size={14} /></Link></>}>
+    <div className="generated-id"><span>Your PRIVATECHAT ID</span><strong>{createdUser.userId}</strong><button className="copy-id-button" type="button" onClick={() => navigator.clipboard.writeText(createdUser.userId)}>Copy ID <Check size={14} /></button></div>
+  </AuthFrame>
+
+  return <AuthFrame eyebrow="Start a conversation" title="Create your account" detail="Use your name, a username, and a password. No email address required." footer={<>Already have an account? <Link to="/login">Sign in <ArrowRight size={14} /></Link></>}>
     <form className="auth-form signup-form" onSubmit={submit}>
       <Field icon={UserRound} label="Full name" value={form.fullName} onChange={update('fullName')} placeholder="Your name" autoComplete="name" />
       <Field icon={UserRound} label="Username" value={form.username} onChange={update('username')} placeholder="Choose a username" autoComplete="username" />
-      <Field icon={Mail} label="Email address" type="email" value={form.email} onChange={update('email')} placeholder="you@example.com" autoComplete="email" />
       <PasswordField label="Create password" value={form.password} onChange={update('password')} autoComplete="new-password" />
       <PasswordField label="Confirm password" value={form.confirm} onChange={update('confirm')} autoComplete="new-password" />
       <p className="password-hint"><KeyRound size={13} /> Use 10 or more characters. A unique passphrase is best.</p>
       <label className="check-label terms-check"><input type="checkbox" checked={form.acceptedTerms} onChange={update('acceptedTerms')} /><span className="custom-check"><Check size={12} /></span>I agree to the PRIVATECHAT terms and privacy notice.</label>
-      {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="form-success" role="status">{notice}</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
       <button className="primary-button full-button" disabled={busy}>{busy ? 'Creating account…' : 'Create account'} <ArrowRight size={17} /></button>
     </form>
   </AuthFrame>

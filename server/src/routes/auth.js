@@ -9,15 +9,25 @@ import { User } from '../models/User.js'
 import { sendAccountLink } from '../services/email.js'
 
 const router = Router()
-const authLimit = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false })
+const createAuthLimit = (limit = 10) => rateLimit({
+  windowMs: 15 * 60_000,
+  limit: process.env.NODE_ENV === 'production' ? limit : 1000,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  handler: (_request, response) => response.status(429).json({ error: 'Too many attempts. Wait a few minutes and try again.' }),
+})
+const registerLimit = createAuthLimit(10)
+const verifyLimit = createAuthLimit(10)
+const loginLimit = createAuthLimit(10)
+const logoutAllLimit = createAuthLimit(5)
+const recoveryLimit = createAuthLimit(5)
 const passwordSchema = z.string().min(10).max(128)
 const registerSchema = z.object({
   fullName: z.string().trim().min(1).max(80),
   username: z.string().trim().regex(/^[a-zA-Z0-9._]{3,24}$/),
-  email: z.string().trim().email().max(254),
   password: passwordSchema,
   acceptedTerms: z.literal(true),
-})
+}).strict()
 const genericCredentials = { error: 'Sign-in failed. Check your credentials and try again.' }
 const hashToken = (token) => createHash('sha256').update(token).digest('hex')
 const newToken = () => {
@@ -38,41 +48,35 @@ const emailLink = (path, token) => {
   return url.toString()
 }
 
-router.post('/register', authLimit, async (request, response) => {
+router.post('/register', registerLimit, async (request, response) => {
   const parsed = registerSchema.safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ error: 'Check the account details and try again.' })
-  const registrationToken = newToken()
 
-  try {
-    const user = await User.create({
-      fullName: parsed.data.fullName,
-      username: parsed.data.username.toLowerCase(),
-      email: parsed.data.email.toLowerCase(),
-      passwordHash: await argon2.hash(parsed.data.password, { type: argon2.argon2id }),
-      verificationTokenHash: registrationToken.tokenHash,
-      verificationExpiresAt: registrationToken.expiresAt,
-    })
+  const passwordHash = await argon2.hash(parsed.data.password, { type: argon2.argon2id })
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const userId = `PC${String(randomBytes(2).readUInt16BE() % 10_000).padStart(4, '0')}`
     try {
-      await sendAccountLink({
-        to: user.email,
-        subject: 'Verify your PRIVATECHAT account',
-        url: emailLink('/verify-email', registrationToken.token),
-        action: 'Verify your email address:',
+      const user = await User.create({
+        userId,
+        fullName: parsed.data.fullName,
+        username: parsed.data.username.toLowerCase(),
+        passwordHash,
+        emailVerified: true,
+        accountStatus: 'active',
       })
+      return response.status(201).json({ user: safeUser(user) })
     } catch (error) {
-      await User.deleteOne({ _id: user._id })
-      if (error?.message === 'EMAIL_NOT_CONFIGURED') return response.status(503).json({ error: 'Account email delivery is not configured.' })
-      return response.status(503).json({ error: 'Verification email could not be sent. Please try again.' })
+      if (error?.code !== 11000) throw error
+      if (error.keyPattern?.userId) continue
+      if (error.keyPattern?.username) return response.status(409).json({ error: 'That username is already in use.' })
+      throw error
     }
-  } catch (error) {
-    if (error?.code === 11000) return response.status(202).json({ message: 'If those details can be registered, a verification email will be sent.' })
-    throw error
   }
 
-  return response.status(202).json({ message: 'Check your email for a verification link.' })
+  return response.status(503).json({ error: 'User ID allocation is temporarily unavailable. Try again shortly.' })
 })
 
-router.post('/verify-email', authLimit, async (request, response) => {
+router.post('/verify-email', verifyLimit, async (request, response) => {
   const parsed = z.string().min(32).max(128).safeParse(request.body?.token)
   if (!parsed.success) return response.status(400).json({ error: 'Verification link is invalid or expired.' })
   const user = await User.findOne({ verificationTokenHash: hashToken(parsed.data), verificationExpiresAt: { $gt: new Date() } })
@@ -102,7 +106,7 @@ router.post('/verify-email', authLimit, async (request, response) => {
   return response.status(503).json({ error: 'User ID allocation is temporarily unavailable. Try again shortly.' })
 })
 
-router.post('/login', authLimit, async (request, response) => {
+router.post('/login', loginLimit, async (request, response) => {
   const parsed = z.object({
     identifier: z.string().trim().min(1).max(254),
     password: z.string().min(1).max(128),
@@ -142,14 +146,14 @@ router.post('/logout', async (request, response) => {
   return response.status(204).end()
 })
 
-router.post('/logout-all', requireUser, async (request, response) => {
+router.post('/logout-all', logoutAllLimit, requireUser, async (request, response) => {
   await User.updateOne({ _id: request.user.id }, { $inc: { authVersion: 1 } })
   await new Promise((resolve) => request.session.destroy(() => resolve()))
   response.clearCookie('privatechat.sid', { httpOnly: true, sameSite: 'strict', secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production', path: '/' })
   return response.status(204).end()
 })
 
-router.post('/forgot-password', authLimit, async (request, response) => {
+router.post('/forgot-password', recoveryLimit, async (request, response) => {
   const parsed = z.string().email().safeParse(request.body?.email)
   if (parsed.success) {
     const user = await User.findOne({ email: parsed.data.toLowerCase(), emailVerified: true })
@@ -167,7 +171,7 @@ router.post('/forgot-password', authLimit, async (request, response) => {
   return response.json({ message: 'If an account matches that email, reset instructions will be sent.' })
 })
 
-router.post('/reset-password', authLimit, async (request, response) => {
+router.post('/reset-password', recoveryLimit, async (request, response) => {
   const parsed = z.object({ token: z.string().min(32).max(128), password: passwordSchema }).safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ error: 'Reset link is invalid or expired.' })
   const user = await User.findOne({ resetTokenHash: hashToken(parsed.data.token), resetExpiresAt: { $gt: new Date() } })
@@ -180,7 +184,15 @@ router.post('/reset-password', authLimit, async (request, response) => {
   return response.json({ message: 'Password updated. Sign in with your new password.' })
 })
 
-router.get('/me', requireUser, (request, response) => response.json({ user: safeUser(request.user) }))
+router.get('/me', async (request, response) => {
+  if (!request.session?.userId) return response.json({ user: null })
+  const user = await User.findById(request.session.userId)
+  if (!user || user.accountStatus !== 'active' || request.session.authVersion !== user.authVersion) {
+    await new Promise((resolve) => request.session.destroy(() => resolve()))
+    return response.json({ user: null })
+  }
+  return response.json({ user: safeUser(user) })
+})
 router.post('/refresh', requireUser, (request, response) => response.json({ user: safeUser(request.user) }))
 
 export default router

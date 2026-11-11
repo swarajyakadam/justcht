@@ -61,4 +61,18 @@ router.get('/:conversationId', async (request, response) => {
   return response.json({ conversation: { id: conversation.id, participant: participant ? publicParticipant(participant) : null, updatedAt: conversation.updatedAt } })
 })
 
+router.delete('/:conversationId', async (request, response) => {
+  const mode = z.enum(['me', 'everyone']).safeParse(request.query.mode ?? 'me')
+  if (!mode.success) return response.status(400).json({ error: 'Invalid mode.' })
+  const conversation = await Conversation.findOne({ _id: request.params.conversationId, participants: request.user.id })
+  if (!conversation) return response.status(404).json({ error: 'Conversation not found.' })
+  if (mode.data === 'everyone') {
+    await Message.deleteMany({ conversationId: conversation.id })
+    await Conversation.deleteOne({ _id: conversation.id })
+  } else {
+    await Message.updateMany({ conversationId: conversation.id }, { $addToSet: { deletedFor: request.user.id } })
+  }
+  return response.status(204).end()
+})
+
 export default router

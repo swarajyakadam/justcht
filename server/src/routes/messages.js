@@ -11,7 +11,7 @@ const router = Router()
 router.use(requireUser)
 const envelopeSchema = z.object({
   conversationId: z.string().min(1),
-  encryptedPayload: z.string().min(16).max(100_000),
+  encryptedPayload: z.string().min(1).max(100_000),
   encryptionMetadata: z.object({ protocol: z.string().min(1).max(64), version: z.string().min(1).max(32) }).passthrough(),
   messageType: z.enum(['text', 'image', 'document']).default('text'),
   clientMessageId: z.string().uuid(),
@@ -24,7 +24,6 @@ router.get('/:conversationId', async (request, response) => {
   if (!query.success) return response.status(400).json({ error: 'Message page parameters are invalid.' })
   const filter = {
     conversationId: conversation.id,
-    deletedForEveryone: false,
     deletedFor: { $ne: request.user.id },
     ...(query.data.before ? { messageTimestamp: { $lt: new Date(query.data.before) } } : {}),
   }
@@ -83,9 +82,8 @@ router.delete('/:messageId', async (request, response) => {
   if (!message || !(await getAuthorizedConversation(message.conversationId, request.user.id))) return response.status(404).json({ error: 'Message not found.' })
 
   if (mode.data === 'everyone') {
-    const withinWindow = Date.now() - message.messageTimestamp.getTime() <= 15 * 60_000
-    if (message.senderId.toString() !== request.user.id || !withinWindow) return response.status(403).json({ error: 'This message can no longer be deleted for everyone.' })
-    await Message.updateOne({ _id: message.id }, { $set: { deletedForEveryone: true, encryptedPayload: '', encryptionMetadata: { protocol: 'deleted', version: '1' } } })
+    if (message.senderId.toString() !== request.user.id) return response.status(403).json({ error: 'You can only delete your own messages for everyone.' })
+    await Message.deleteOne({ _id: message.id })
   } else {
     await Message.updateOne({ _id: message.id }, { $addToSet: { deletedFor: request.user.id } })
   }

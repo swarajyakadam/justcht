@@ -4,8 +4,8 @@ All routes are same-origin under `/api`. Authenticated requests use the HttpOnly
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/auth/register` | Create pending account and send email verification |
-| POST | `/auth/verify-email` | Verify email, allocate unique `PC####` ID, and start a session |
+| POST | `/auth/register` | Create active account without email, allocate unique `PC####` ID |
+| POST | `/auth/verify-email` | Legacy verification for pending email-based accounts |
 | POST | `/auth/login` | Sign in by User ID or username |
 | POST | `/auth/logout` | Revoke current session |
 | POST | `/auth/logout-all` | Increment account auth version and revoke all sessions |

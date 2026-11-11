@@ -10,11 +10,23 @@ const toPublicUser = (user) => ({
   username: user.username,
   fullName: user.fullName,
   profilePicture: user.profilePicture,
+  lastSeen: user.lastSeen,
   createdAt: user.createdAt,
 })
 
 router.use(requireUser)
 router.get('/me', (request, response) => response.json({ user: toPublicUser(request.user) }))
+
+router.post('/heartbeat', async (request, response) => {
+  await User.updateOne({ _id: request.user.id }, { $set: { lastSeen: new Date() } })
+  return response.status(204).end()
+})
+
+router.get('/presence/:userId', async (request, response) => {
+  const user = await User.findOne({ userId: request.params.userId.toUpperCase(), accountStatus: 'active' }).select('lastSeen')
+  if (!user) return response.status(404).json({ error: 'User not found.' })
+  return response.json({ lastSeen: user.lastSeen })
+})
 
 router.get('/search/:userId', async (request, response) => {
   const query = z.string().trim().min(3).max(24).safeParse(request.params.userId)
